@@ -32,7 +32,12 @@ export function useStream() {
       if (agentId) body.agent_id = agentId;
       if (sessionId) body.session_id = sessionId;
 
-      const res = await fetch("/api/runs/stream", {
+      // SSE stream must go directly to backend to avoid Next.js proxy buffering
+      const streamUrl = process.env.NEXT_PUBLIC_API_URL
+        ? `${process.env.NEXT_PUBLIC_API_URL}/api/runs/stream`
+        : "http://localhost:8000/api/runs/stream";
+
+      const res = await fetch(streamUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
