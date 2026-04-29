@@ -75,3 +75,14 @@ class BaseMemoryStore:
 
     async def update(self, entry_id: str, content: str, metadata: dict[str, Any] | None = None) -> bool:
         raise NotImplementedError
+
+
+# Convenience re-exports
+from synapse_core.memory.manager import MemoryManager
+from synapse_core.memory.user_profile import ProfileExtractor
+
+__all__ = [
+    "MemoryType", "MemoryEntry", "CompactionResult",
+    "UserTrait", "UserProfile", "MemorySearchOptions",
+    "BaseMemoryStore", "MemoryManager", "ProfileExtractor",
+]
