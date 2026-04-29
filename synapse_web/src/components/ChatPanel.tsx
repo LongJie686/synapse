@@ -39,7 +39,10 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
 
   // Load messages when switching conversation
   useEffect(() => {
-    if (!activeConvId) return;
+    if (!activeConvId) {
+      setMessages([]);
+      return;
+    }
     const conv = conversations.find((c) => c.id === activeConvId);
     if (!conv) return;
 
@@ -49,7 +52,7 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
       return;
     }
 
-    // Load from backend
+    // Load from backend only once
     if (!conv.loaded) {
       fetch(`/api/sessions/${activeConvId}`)
         .then((res) => res.json())
@@ -63,15 +66,16 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
             onUpdateConv(activeConvId, (c) => ({ ...c, messages: streamMsgs, loaded: true }));
           } else {
             setMessages([]);
-            onUpdateConv(activeConvId, (c) => ({ ...c, loaded: true }));
+            onUpdateConv(activeConvId, (c) => ({ ...c, messages: [], loaded: true }));
           }
         })
         .catch(() => {
           setMessages([]);
-          onUpdateConv(activeConvId, (c) => ({ ...c, loaded: true }));
+          onUpdateConv(activeConvId, (c) => ({ ...c, messages: [], loaded: true }));
         });
     } else {
-      setMessages([]);
+      // Loaded before but empty -- just show empty
+      setMessages(conv.messages);
     }
   }, [activeConvId]);
 
@@ -81,12 +85,17 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
     }
   }, [messages, activeConvId, onUpdateConv]);
 
-  const handleSend = () => {
+  const handleSend = async () => {
     const text = input.trim();
     if (!text || isStreaming) return;
-    if (!activeConvId) onNewChat();
+    let sessionId = activeConvId;
+    if (!sessionId) {
+      await onNewChat();
+      // onNewChat is async and sets activeConvId via state, but state update is deferred
+      // So we let sendMessage proceed without sessionId -- backend will create one
+    }
     setInput("");
-    sendMessage(text, selectedAgentId, activeConvId || undefined);
+    sendMessage(text, selectedAgentId, sessionId || undefined);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
