@@ -1,0 +1,45 @@
+# ── Build stage ──────────────────────────────────────────────────────────────
+FROM python:3.11-slim AS builder
+
+WORKDIR /app
+
+COPY pyproject.toml .
+COPY synapse_core/pyproject.toml synapse_core/
+COPY synapse_core synapse_core
+COPY synapse_server/pyproject.toml synapse_server/
+COPY synapse_server synapse_server
+
+RUN pip install --no-cache-dir -e ./synapse_core -e ./synapse_server
+
+# ── Production stage ────────────────────────────────────────────────────────
+FROM python:3.11-slim AS production
+
+WORKDIR /app
+
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /app/synapse_core /app/synapse_core
+COPY --from=builder /app/synapse_server /app/synapse_server
+
+EXPOSE 8000
+
+CMD ["uvicorn", "synapse_server.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+
+# ── Development stage ───────────────────────────────────────────────────────
+FROM python:3.11-slim AS development
+
+WORKDIR /app
+
+RUN pip install --no-cache-dir uvicorn
+
+COPY pyproject.toml .
+COPY synapse_core/pyproject.toml synapse_core/
+COPY synapse_core synapse_core
+COPY synapse_server/pyproject.toml synapse_server/
+COPY synapse_server synapse_server
+
+RUN pip install --no-cache-dir -e ./synapse_core -e ./synapse_server
+
+EXPOSE 8000
+
+CMD ["uvicorn", "synapse_server.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000", "--reload"]
