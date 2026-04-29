@@ -19,9 +19,22 @@ from synapse_core.streaming import (
     agent_message,
     agent_call_tool,
     tool_result,
+    memory_retrieve,
+    memory_store,
 )
 from synapse_core.tools import ToolRegistry
 from synapse_core.graph.state import RunState, Message, TokenUsage
+
+# Lazy import to avoid circular dependency
+_MEMORY_MANAGER = None
+
+
+def _get_memory_manager():
+    global _MEMORY_MANAGER
+    if _MEMORY_MANAGER is None:
+        from synapse_core.memory.manager import MemoryManager
+        _MEMORY_MANAGER = MemoryManager(short_term_type="conversation-buffer")
+    return _MEMORY_MANAGER
 
 
 class GraphBuilder:
@@ -31,10 +44,12 @@ class GraphBuilder:
         self,
         agent: AgentDefinition,
         tool_registry: ToolRegistry,
+        memory_manager=None,
     ) -> None:
         self.agent = agent
         self.tool_registry = tool_registry
         self._provider = create_provider(agent.llm)
+        self._memory = memory_manager or _get_memory_manager()
 
     def _build_system_prompt(self) -> str:
         parts = [
@@ -137,8 +152,8 @@ class GraphBuilder:
             return "sql_query"
         return self.agent.tools[0]
 
-    async def run(self, user_input: str, run_id: str | None = None) -> AsyncIterator[StreamEvent]:
-        """Execute agent with streaming events."""
+    async def run(self, user_input: str, run_id: str | None = None, session_id: str | None = None) -> AsyncIterator[StreamEvent]:
+        """Execute agent with streaming events, memory integration."""
         run_id = run_id or str(uuid.uuid4())
         start_time = time.monotonic()
         total_usage = TokenUsage()
@@ -146,10 +161,38 @@ class GraphBuilder:
         yield run_start(run_id, self.agent.id)
 
         system_prompt = self._build_system_prompt()
-        messages = [Message(role="system", content=system_prompt)]
+
+        # Load conversation history from short-term memory
+        history = await self._memory.get_conversation_context(session_id or "default")
+
+        # Load relevant long-term memories
+        long_term_memories = await self._memory.retrieve(user_input, top_k=3)
+        if long_term_memories:
+            memory_context = "\n\n[Relevant past memories]\n" + "\n".join(
+                f"- ({m.memory_type.value}) {m.content}" for m in long_term_memories
+            )
+            yield memory_retrieve("long-term", user_input, len(long_term_memories))
+        else:
+            memory_context = ""
+
+        # Build full system prompt with memory context
+        full_system = system_prompt + memory_context
+
+        messages = [Message(role="system", content=full_system)]
+
+        # Add history messages
+        for msg in history[-10:]:  # Last 10 messages for context window
+            messages.append(msg)
 
         if user_input:
             messages.append(Message(role="user", content=user_input))
+            # Save user message to short-term memory
+            await self._memory.add_message(
+                session_id or "default",
+                Message(role="user", content=user_input),
+            )
+
+        final_content = ""
 
         try:
             for iteration in range(self.agent.max_iterations):
@@ -172,6 +215,7 @@ class GraphBuilder:
                 tool_calls = self._parse_tool_calls(response.content)
 
                 if not tool_calls:
+                    final_content = response.content
                     yield agent_message(self.agent.id, response.content)
                     break
 
@@ -193,6 +237,14 @@ class GraphBuilder:
                             role="assistant",
                             content=f"Tool {tool_name} failed: {result.error}. Let me try another approach.",
                         ))
+
+            # Save assistant message to short-term memory
+            if final_content:
+                await self._memory.add_message(
+                    session_id or "default",
+                    Message(role="assistant", content=final_content),
+                )
+                yield memory_store("short-term", session_id or "default")
 
             duration = (time.monotonic() - start_time) * 1000
             yield run_end(run_id, total_usage.model_dump(), duration)

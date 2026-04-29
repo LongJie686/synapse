@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import ChatPanel, { Conversation } from "@/components/ChatPanel";
 import AgentsPanel from "@/components/AgentsPanel";
 import MetricsPanel from "@/components/MetricsPanel";
 import { Lang, I18nKey, t } from "@/lib/i18n";
+import { SessionInfo, fetchSessions, createSession, deleteSession as apiDeleteSession } from "@/lib/api";
 
 type Tab = "chat" | "agents" | "metrics";
 
@@ -22,19 +23,55 @@ export default function Home() {
 
   const toggleLang = () => setLang((l) => (l === "zh" ? "en" : "zh"));
 
-  const handleNewChat = useCallback(() => {
-    const id = `conv-${Date.now()}`;
-    setConversations((prev) => [{
-      id,
-      title: `${t(lang, "newChat")} ${prev.length + 1}`,
-      agentId: "",
-      agentName: "",
-      messages: [],
-    }, ...prev]);
-    setActiveConvId(id);
-  }, [lang]);
+  // Load sessions from backend on mount
+  useEffect(() => {
+    fetchSessions()
+      .then((sessions) => {
+        const convs: Conversation[] = sessions.map((s: SessionInfo) => ({
+          id: s.session_id,
+          title: s.title || `Session ${s.session_id.slice(0, 8)}`,
+          agentId: s.agent_id,
+          agentName: "",
+          messages: [],
+          loaded: false,
+        }));
+        setConversations(convs);
+      })
+      .catch(() => {});
+  }, []);
 
-  const handleDeleteConv = useCallback((convId: string) => {
+  const handleNewChat = useCallback(async () => {
+    try {
+      const result = await createSession({ agent_id: "general-assistant", title: "" });
+      const id = result.session_id;
+      const newConv: Conversation = {
+        id,
+        title: `${t(lang, "newChat")} ${conversations.length + 1}`,
+        agentId: result.agent_id,
+        agentName: "",
+        messages: [],
+        loaded: true,
+      };
+      setConversations((prev) => [newConv, ...prev]);
+      setActiveConvId(id);
+    } catch {
+      // Fallback: local-only conversation
+      const id = `local-${Date.now()}`;
+      const newConv: Conversation = {
+        id,
+        title: `${t(lang, "newChat")} ${conversations.length + 1}`,
+        agentId: "",
+        agentName: "",
+        messages: [],
+        loaded: true,
+      };
+      setConversations((prev) => [newConv, ...prev]);
+      setActiveConvId(id);
+    }
+  }, [lang, conversations.length]);
+
+  const handleDeleteConv = useCallback(async (convId: string) => {
+    try { await apiDeleteSession(convId); } catch { /* local conv */ }
     setConversations((prev) => prev.filter((c) => c.id !== convId));
     if (activeConvId === convId) setActiveConvId(null);
   }, [activeConvId]);
@@ -116,7 +153,6 @@ export default function Home() {
                   whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                 }}>
                   {conv.title}
-                  <span style={{ fontSize: 10, marginLeft: 4, opacity: 0.6 }}>({conv.messages.length})</span>
                 </button>
                 <button onClick={() => handleDeleteConv(conv.id)} style={{
                   padding: "4px 6px", fontSize: 10, background: "transparent",

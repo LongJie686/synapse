@@ -58,6 +58,13 @@ const dict = {
     noResponse: "(无响应)",
     loading: "加载中...",
     version: "版本",
+    // Agent names
+    "agent:general-assistant": "Synapse 助手",
+    "agent:code-expert": "代码专家",
+    "agent:data-analyst": "数据分析师",
+    "agent-role:general-assistant": "通用 AI 助手",
+    "agent-role:code-expert": "软件工程专家",
+    "agent-role:data-analyst": "数据分析与可视化专家",
   },
   en: {
     chat: "Chat",
@@ -110,6 +117,12 @@ const dict = {
     noResponse: "(no response)",
     loading: "Loading...",
     version: "version",
+    "agent:general-assistant": "Synapse Assistant",
+    "agent:code-expert": "Code Expert",
+    "agent:data-analyst": "Data Analyst",
+    "agent-role:general-assistant": "General-purpose AI assistant",
+    "agent-role:code-expert": "Software engineering specialist",
+    "agent-role:data-analyst": "Data analysis and visualization specialist",
   },
 } as const;
 
@@ -117,4 +130,14 @@ export type I18nKey = keyof typeof dict.en;
 
 export function t(lang: Lang, key: I18nKey): string {
   return dict[lang][key];
+}
+
+export function agentName(lang: Lang, id: string, fallback: string): string {
+  const k = `agent:${id}` as I18nKey;
+  return dict[lang][k] || fallback;
+}
+
+export function agentRole(lang: Lang, id: string, fallback: string): string {
+  const k = `agent-role:${id}` as I18nKey;
+  return dict[lang][k] || fallback;
 }

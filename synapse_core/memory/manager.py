@@ -17,6 +17,7 @@ from synapse_core.memory import (
 )
 from synapse_core.memory.short_term import ConversationBuffer, SlidingWindow, SummaryBuffer
 from synapse_core.memory.long_term import ChromaMemoryStore
+from synapse_core.memory.long_term.sqlite_store import SqliteMemoryStore
 from synapse_core.memory.user_profile import ProfileExtractor
 
 
@@ -46,7 +47,7 @@ class MemoryManager:
         auto_save_importance: float = 0.6,
         summarize_fn: SummarizeFn | None = None,
     ) -> None:
-        self._store = store or ChromaMemoryStore()
+        self._store = store or SqliteMemoryStore()
         self._summarize_fn = summarize_fn
         self._auto_save_importance = auto_save_importance
 

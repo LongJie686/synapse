@@ -14,7 +14,7 @@ export function useStream() {
   const [isStreaming, setIsStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (content: string, agentId?: string, sessionId?: string) => {
     const userMsg: StreamMessage = { role: "user", content };
     const assistantMsg: StreamMessage = { role: "assistant", content: "", isStreaming: true, toolCalls: [] };
 
@@ -28,10 +28,14 @@ export function useStream() {
     });
 
     try {
+      const body: Record<string, string> = { message: content };
+      if (agentId) body.agent_id = agentId;
+      if (sessionId) body.session_id = sessionId;
+
       const res = await fetch("/api/runs/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: content }),
+        body: JSON.stringify(body),
         signal: abortRef.current?.signal,
       });
 
@@ -47,68 +51,86 @@ export function useStream() {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
 
-        for (const line of lines) {
-          if (line.startsWith("data:")) {
-            try {
-              const data = JSON.parse(line.slice(5).trim());
-              const eventType = line.match(/^event:\s*(.+)$/m)?.[1];
+        // SSE events are separated by double newlines
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || "";
 
-              if (data.agentId && data.content) {
-                fullContent += data.content;
-              } else if (data.agentId && data.thought) {
-                // think event, skip or show
-              }
+        for (const eventText of events) {
+          if (!eventText.trim()) continue;
 
-              // Handle tool calls
-              if (data.toolName && data.input !== undefined) {
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const msg = { ...updated[currentIdx.value] };
-                  msg.toolCalls = [...(msg.toolCalls || []), { name: data.toolName, input: JSON.stringify(data.input) }];
-                  updated[currentIdx.value] = msg;
-                  return updated;
-                });
-              }
+          let eventType = "";
+          let eventData = "";
 
-              // Handle tool results
-              if (data.toolName && data.output !== undefined) {
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  const msg = { ...updated[currentIdx.value] };
-                  const calls = [...(msg.toolCalls || [])];
-                  const lastCall = calls[calls.length - 1];
-                  if (lastCall) {
-                    calls[calls.length - 1] = { ...lastCall, result: String(data.output) };
-                  }
-                  msg.toolCalls = calls;
-                  updated[currentIdx.value] = msg;
-                  return updated;
-                });
-              }
-
-              // Handle content chunks (from SSE data with content field)
-              if (typeof data.content === "string" && data.agentId) {
-                fullContent = data.content;
-                setMessages((prev) => {
-                  const updated = [...prev];
-                  updated[currentIdx.value] = {
-                    ...updated[currentIdx.value],
-                    content: fullContent,
-                  };
-                  return updated;
-                });
-              }
-            } catch {
-              // skip malformed JSON
+          for (const line of eventText.split("\n")) {
+            if (line.startsWith("event:")) {
+              eventType = line.slice(6).trim();
+            } else if (line.startsWith("data:")) {
+              eventData = line.slice(5).trim();
             }
+          }
+
+          if (!eventData) continue;
+
+          try {
+            const data = JSON.parse(eventData);
+
+            if (eventType === "run:error") {
+              fullContent = data.error || "Unknown error";
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[currentIdx.value] = {
+                  ...updated[currentIdx.value],
+                  content: fullContent,
+                  isStreaming: false,
+                };
+                return updated;
+              });
+              return;
+            }
+
+            if (eventType === "agent:call_tool" && data.toolName) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const msg = { ...updated[currentIdx.value] };
+                msg.toolCalls = [...(msg.toolCalls || []), { name: data.toolName, input: JSON.stringify(data.input) }];
+                updated[currentIdx.value] = msg;
+                return updated;
+              });
+            }
+
+            if (eventType === "tool:result" && data.toolName) {
+              setMessages((prev) => {
+                const updated = [...prev];
+                const msg = { ...updated[currentIdx.value] };
+                const calls = [...(msg.toolCalls || [])];
+                const lastCall = calls[calls.length - 1];
+                if (lastCall) {
+                  calls[calls.length - 1] = { ...lastCall, result: String(data.output) };
+                }
+                msg.toolCalls = calls;
+                updated[currentIdx.value] = msg;
+                return updated;
+              });
+            }
+
+            if (eventType === "agent:message" && typeof data.content === "string") {
+              fullContent = data.content;
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[currentIdx.value] = {
+                  ...updated[currentIdx.value],
+                  content: fullContent,
+                };
+                return updated;
+              });
+            }
+          } catch {
+            // skip malformed JSON
           }
         }
       }
 
-      // Final update
       setMessages((prev) => {
         const updated = [...prev];
         updated[currentIdx.value] = {
@@ -144,5 +166,5 @@ export function useStream() {
     setMessages([]);
   }, []);
 
-  return { messages, isStreaming, sendMessage, stop, clear };
+  return { messages, isStreaming, sendMessage, stop, clear, setMessages };
 }

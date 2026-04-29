@@ -39,3 +39,6 @@ logs/
 synapse_web/node_modules/
 synapse_web/.next/
 synapse_web/out/
+data/
+synapse_core/data/
+.codeartsdoer/

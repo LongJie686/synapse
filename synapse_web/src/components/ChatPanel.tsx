@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useStream, StreamMessage } from "@/hooks/useStream";
 import { AgentInfo, fetchAgents } from "@/lib/api";
-import { Lang, t } from "@/lib/i18n";
+import { Lang, t, agentName, agentRole } from "@/lib/i18n";
 
 export interface Conversation {
   id: string;
@@ -11,6 +11,7 @@ export interface Conversation {
   agentId: string;
   agentName: string;
   messages: StreamMessage[];
+  loaded?: boolean;
 }
 
 interface Props {
@@ -22,7 +23,7 @@ interface Props {
 }
 
 export default function ChatPanel({ lang, conversations, activeConvId, onUpdateConv, onNewChat }: Props) {
-  const { messages, isStreaming, sendMessage, stop } = useStream();
+  const { messages, isStreaming, sendMessage, stop, setMessages } = useStream();
   const [input, setInput] = useState("");
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
@@ -36,6 +37,44 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
+  // Load messages when switching conversation
+  useEffect(() => {
+    if (!activeConvId) return;
+    const conv = conversations.find((c) => c.id === activeConvId);
+    if (!conv) return;
+
+    if (conv.messages.length > 0) {
+      // Already loaded locally, restore from conversation
+      setMessages(conv.messages);
+      return;
+    }
+
+    // Load from backend
+    if (!conv.loaded) {
+      fetch(`/api/sessions/${activeConvId}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.messages && data.messages.length > 0) {
+            const streamMsgs: StreamMessage[] = data.messages.map((m: { role: string; content: string }) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content,
+            }));
+            setMessages(streamMsgs);
+            onUpdateConv(activeConvId, (c) => ({ ...c, messages: streamMsgs, loaded: true }));
+          } else {
+            setMessages([]);
+            onUpdateConv(activeConvId, (c) => ({ ...c, loaded: true }));
+          }
+        })
+        .catch(() => {
+          setMessages([]);
+          onUpdateConv(activeConvId, (c) => ({ ...c, loaded: true }));
+        });
+    } else {
+      setMessages([]);
+    }
+  }, [activeConvId]);
+
   useEffect(() => {
     if (activeConvId && messages.length > 0) {
       onUpdateConv(activeConvId, (c) => ({ ...c, messages: [...messages] }));
@@ -47,7 +86,7 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
     if (!text || isStreaming) return;
     if (!activeConvId) onNewChat();
     setInput("");
-    sendMessage(text);
+    sendMessage(text, selectedAgentId, activeConvId || undefined);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -82,7 +121,7 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
             flex: 1, padding: "6px 10px", fontSize: 12, background: "var(--bg-tertiary)",
             border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-primary)", outline: "none",
           }}>
-            {agents.map((a) => (<option key={a.id} value={a.id}>{a.name} - {a.role}</option>))}
+            {agents.map((a) => (<option key={a.id} value={a.id}>{agentName(lang, a.id, a.name)} - {agentRole(lang, a.id, a.role)}</option>))}
             {agents.length === 0 && (<option value="">{t(lang, "defaultAgent")}</option>)}
           </select>
         </div>

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AgentInfo, fetchAgents, createAgent, deleteAgent } from "@/lib/api";
-import { Lang, t } from "@/lib/i18n";
+import { Lang, t, agentName, agentRole } from "@/lib/i18n";
 
 interface Props { lang: Lang }
 
@@ -88,8 +88,8 @@ export default function AgentsPanel({ lang }: Props) {
               borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center",
             }}>
               <div>
-                <div style={{ fontWeight: 600, fontSize: 15 }}>{agent.name}</div>
-                <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>{agent.role}</div>
+                <div style={{ fontWeight: 600, fontSize: 15 }}>{agentName(lang, agent.id, agent.name)}</div>
+                <div style={{ fontSize: 13, color: "var(--text-secondary)", marginTop: 4 }}>{agentRole(lang, agent.id, agent.role)}</div>
                 {agent.tools.length > 0 && (
                   <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {agent.tools.map((tool) => (
