@@ -60,20 +60,82 @@ class GraphBuilder:
         return "\n\n".join(parts)
 
     def _parse_tool_calls(self, content: str) -> list[tuple[str, dict[str, Any]]]:
-        """Parse TOOL_CALL: name(args) from response."""
+        """Parse TOOL_CALL patterns from response.
+
+        Supports two formats:
+          TOOL_CALL: tool_name({"key": "value"})
+          TOOL_CALL: {"key": "value"}  (uses first available tool from agent config)
+        """
         import json
         import re
 
         calls = []
-        pattern = r'TOOL_CALL:\s*(\w+)\((.+?)\)'
-        for match in re.finditer(pattern, content, re.DOTALL):
+
+        # Format 1: TOOL_CALL: name(args)
+        pattern_named = r'TOOL_CALL:\s*(\w+)\((.+?)\)'
+        for match in re.finditer(pattern_named, content, re.DOTALL):
             tool_name = match.group(1)
             try:
                 args = json.loads(match.group(2))
             except json.JSONDecodeError:
                 args = {"expression": match.group(2)}
             calls.append((tool_name, args))
+
+        if calls:
+            return calls
+
+        # Format 2: TOOL_CALL: {json} (no function name -- infer from agent tools)
+        pattern_json = r'TOOL_CALL:\s*(\{.+?\})'
+        for match in re.finditer(pattern_json, content, re.DOTALL):
+            try:
+                args = json.loads(match.group(1))
+            except json.JSONDecodeError:
+                continue
+            tool_name = self._infer_tool(args)
+            calls.append((tool_name, args))
+
+        if calls:
+            return calls
+
+        # Format 3: tool_name\n{json} (GLM-style: name and JSON on separate lines)
+        for tool_name in self.agent.tools:
+            escaped = re.escape(tool_name)
+            pattern_loose = rf'(?:^|\n){escaped}\s*\n\s*(\{{.+?\}})'
+            for match in re.finditer(pattern_loose, content, re.DOTALL):
+                try:
+                    args = json.loads(match.group(1))
+                except json.JSONDecodeError:
+                    continue
+                calls.append((tool_name, args))
+
+        if calls:
+            return calls
+
+        # Format 4: any standalone JSON with known arg keys
+        for match in re.finditer(r'(\{[^{}]{5,200}?\})', content, re.DOTALL):
+            try:
+                args = json.loads(match.group(1))
+                if isinstance(args, dict) and any(k in args for k in ("expression", "query", "url", "sql")):
+                    tool_name = self._infer_tool(args)
+                    calls.append((tool_name, args))
+            except (json.JSONDecodeError, ValueError):
+                continue
+
         return calls
+
+    def _infer_tool(self, args: dict[str, Any]) -> str:
+        """Infer which tool to use from the arguments."""
+        if not self.agent.tools:
+            return "calculator"
+        if "expression" in args:
+            return "calculator"
+        if "query" in args:
+            return "web_search"
+        if "url" in args:
+            return "http_request"
+        if "sql" in args:
+            return "sql_query"
+        return self.agent.tools[0]
 
     async def run(self, user_input: str, run_id: str | None = None) -> AsyncIterator[StreamEvent]:
         """Execute agent with streaming events."""
@@ -119,9 +181,10 @@ class GraphBuilder:
 
                     yield tool_result(tool_name, result.output if result.output else result.error, result.execution_time_ms)
 
+                    tool_output = str(result.output if result.output else result.error)
                     messages.append(Message(
-                        role="tool",
-                        content=str(result.output if result.output else result.error),
+                        role="user",
+                        content=f"[Tool Result: {tool_name}]\n{tool_output}",
                         name=tool_name,
                     ))
 
