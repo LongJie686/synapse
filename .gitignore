@@ -34,3 +34,8 @@ Thumbs.db
 
 logs/
 *.log
+
+# Frontend
+synapse_web/node_modules/
+synapse_web/.next/
+synapse_web/out/
