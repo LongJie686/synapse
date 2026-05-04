@@ -19,14 +19,18 @@ export default function MetricsPanel({ lang }: Props) {
   const counters = (metrics?.counters || {}) as Record<string, number>;
   const entries = Object.entries(counters);
 
-  const cardDefs: { labelKey: "totalRuns" | "llmCalls" | "toolCalls" | "guardrailBlocks" | "memoryEvents" | "toolErrors"; key: string }[] = [
+  const cardDefs: { labelKey: "totalRuns" | "llmCalls" | "toolCalls" | "guardrailBlocks" | "memoryEvents" | "toolErrors"; key: string; color?: string }[] = [
     { labelKey: "totalRuns", key: "runs.total" },
     { labelKey: "llmCalls", key: "llm_calls.total" },
     { labelKey: "toolCalls", key: "tool_calls.total" },
     { labelKey: "guardrailBlocks", key: "guardrail_events.total" },
     { labelKey: "memoryEvents", key: "memory_events.total" },
-    { labelKey: "toolErrors", key: "tool_calls.errors" },
+    { labelKey: "toolErrors", key: "tool_calls.errors", color: "var(--error)" },
   ];
+
+  const totalTokens = counters["tokens.total"] || 0;
+  const promptTokens = counters["tokens.prompt"] || 0;
+  const completionTokens = counters["tokens.completion"] || 0;
 
   return (
     <div style={{ padding: 24 }}>
@@ -48,12 +52,43 @@ export default function MetricsPanel({ lang }: Props) {
       {metrics && (
         <div style={{ display: "grid", gap: 16 }}>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
-            {cardDefs.map(({ labelKey, key }) => (
+            {cardDefs.map(({ labelKey, key, color }) => (
               <div key={key} style={{ padding: 16, background: "var(--bg-secondary)", border: "1px solid var(--border)", borderRadius: 10 }}>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>{t(lang, labelKey)}</div>
-                <div style={{ fontSize: 28, fontWeight: 700 }}>{counters[key] || 0}</div>
+                <div style={{ fontSize: 28, fontWeight: 700, color: color || "inherit" }}>{counters[key] || 0}</div>
               </div>
             ))}
+          </div>
+
+          {/* Token usage section */}
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", borderRadius: 10, padding: 16 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 600, marginTop: 0, marginBottom: 16 }}>{t(lang, "tokenUsage")}</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12 }}>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>{t(lang, "totalTokens")}</div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: "var(--accent)" }}>{totalTokens.toLocaleString()}</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>{t(lang, "promptTokens")}</div>
+                <div style={{ fontSize: 24, fontWeight: 700 }}>{promptTokens.toLocaleString()}</div>
+              </div>
+              <div style={{ textAlign: "center" }}>
+                <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 4 }}>{t(lang, "completionTokens")}</div>
+                <div style={{ fontSize: 24, fontWeight: 700 }}>{completionTokens.toLocaleString()}</div>
+              </div>
+            </div>
+            {totalTokens > 0 && (
+              <div style={{ marginTop: 16, background: "var(--bg-tertiary)", borderRadius: 4, height: 8, overflow: "hidden", display: "flex" }}>
+                <div style={{ width: `${(promptTokens / totalTokens) * 100}%`, background: "var(--accent)", borderRadius: "4px 0 0 4px" }} title={`Prompt: ${promptTokens}`} />
+                <div style={{ flex: 1, background: "var(--success)", borderRadius: "0 4px 4px 0" }} title={`Completion: ${completionTokens}`} />
+              </div>
+            )}
+            {totalTokens > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 11, color: "var(--text-muted)" }}>
+                <span>{t(lang, "prompt")} {(promptTokens / totalTokens * 100).toFixed(1)}%</span>
+                <span>{t(lang, "completion")} {(completionTokens / totalTokens * 100).toFixed(1)}%</span>
+              </div>
+            )}
           </div>
 
           {entries.length > 0 && (

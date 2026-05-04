@@ -211,3 +211,80 @@ class MMRRetriever(BaseRetriever):
             ))
 
         return results
+
+
+class CrossEncoderReranker:
+    """
+    Cross-Encoder reranker for two-stage retrieval.
+    Stage 1: fast vector/BM25 retrieval (recall top-K)
+    Stage 2: precise Cross-Encoder scoring (select top-N)
+    """
+
+    def __init__(self, model_name: str = "BAAI/bge-reranker-base", device: str = "cpu") -> None:
+        self._model_name = model_name
+        self._device = device
+        self._model: Any = None
+
+    def _get_model(self) -> Any:
+        if self._model is None:
+            from sentence_transformers import CrossEncoder
+            self._model = CrossEncoder(self._model_name, device=self._device)
+        return self._model
+
+    def rerank(
+        self,
+        query: str,
+        results: list[RetrievalResult],
+        top_k: int = 5,
+    ) -> list[RetrievalResult]:
+        """Rerank retrieval results using Cross-Encoder scoring."""
+        if not results:
+            return results
+
+        model = self._get_model()
+        pairs = [(query, r.chunk.content) for r in results]
+        scores = model.predict(pairs)
+
+        scored = list(zip(results, scores))
+        scored.sort(key=lambda x: x[1], reverse=True)
+
+        reranked = []
+        for result, score in scored[:top_k]:
+            reranked.append(RetrievalResult(
+                chunk=result.chunk,
+                score=float(score),
+                strategy=f"reranked-{result.strategy}",
+            ))
+        return reranked
+
+
+class LLMBasedReranker:
+    """
+    LLM-based reranker for environments without sentence-transformers.
+    Uses keyword overlap heuristic as lightweight reranking.
+    """
+
+    async def rerank(
+        self,
+        query: str,
+        results: list[RetrievalResult],
+        top_k: int = 5,
+    ) -> list[RetrievalResult]:
+        """Rerank using keyword overlap + original score."""
+        if not results:
+            return results
+
+        query_words = set(query.lower().split())
+        scored: list[tuple[float, RetrievalResult]] = []
+
+        for result in results:
+            content_words = set(result.chunk.content.lower().split())
+            overlap = len(query_words & content_words) / max(len(query_words), 1)
+            combined = result.score * 0.6 + overlap * 0.4
+            scored.append((combined, result))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [
+            RetrievalResult(chunk=r.chunk, score=s, strategy=f"reranked-{r.strategy}")
+            for s, r in scored[:top_k]
+        ]

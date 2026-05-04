@@ -1,9 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { useStream, StreamMessage } from "@/hooks/useStream";
-import { AgentInfo, fetchAgents } from "@/lib/api";
+import { useStream, StreamMessage, TitleUpdate, AttachedFile } from "@/hooks/useStream";
+import { AgentInfo, fetchAgents, uploadFile } from "@/lib/api";
 import { Lang, t, agentName, agentRole } from "@/lib/i18n";
+import { useToast } from "@/components/Toast";
 
 export interface Conversation {
   id: string;
@@ -19,20 +20,24 @@ interface Props {
   conversations: Conversation[];
   activeConvId: string | null;
   onUpdateConv: (convId: string, updater: (c: Conversation) => Conversation) => void;
-  onNewChat: () => void;
+  onNewChat: () => Promise<string>;
+  onTitleUpdate: (update: TitleUpdate) => void;
 }
 
-export default function ChatPanel({ lang, conversations, activeConvId, onUpdateConv, onNewChat }: Props) {
+export default function ChatPanel({ lang, conversations, activeConvId, onUpdateConv, onNewChat, onTitleUpdate }: Props) {
   const { messages, isStreaming, sendMessage, stop, setMessages } = useStream();
   const [input, setInput] = useState("");
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState<AttachedFile[]>([]);
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     fetchAgents()
       .then((data) => { setAgents(data); if (data.length > 0) setSelectedAgentId(data[0].id); })
-      .catch(() => {});
+      .catch(() => { /* agents unavailable */ });
   }, []);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
@@ -47,12 +52,10 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
     if (!conv) return;
 
     if (conv.messages.length > 0) {
-      // Already loaded locally, restore from conversation
       setMessages(conv.messages);
       return;
     }
 
-    // Load from backend only once
     if (!conv.loaded) {
       fetch(`/api/sessions/${activeConvId}`)
         .then((res) => res.json())
@@ -74,7 +77,6 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
           onUpdateConv(activeConvId, (c) => ({ ...c, messages: [], loaded: true }));
         });
     } else {
-      // Loaded before but empty -- just show empty
       setMessages(conv.messages);
     }
   }, [activeConvId]);
@@ -87,15 +89,52 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
 
   const handleSend = async () => {
     const text = input.trim();
-    if (!text || isStreaming) return;
+    if ((!text && pendingAttachments.length === 0) || isStreaming) return;
     let sessionId = activeConvId;
     if (!sessionId) {
-      await onNewChat();
-      // onNewChat is async and sets activeConvId via state, but state update is deferred
-      // So we let sendMessage proceed without sessionId -- backend will create one
+      sessionId = await onNewChat();
     }
     setInput("");
-    sendMessage(text, selectedAgentId, sessionId || undefined);
+    const attachments = [...pendingAttachments];
+    setPendingAttachments([]);
+    sendMessage(text || "(attachment)", selectedAgentId, sessionId || undefined, onTitleUpdate, attachments.length > 0 ? attachments : undefined);
+  };
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    for (const file of Array.from(files)) {
+      try {
+        const result = await uploadFile(file);
+        let base64Data: string | undefined;
+        let mimeType: string | undefined;
+
+        // If it's an image, read base64 for LLM vision
+        if (result.is_image) {
+          const arrayBuf = await file.arrayBuffer();
+          const bytes = new Uint8Array(arrayBuf);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          base64Data = btoa(binary);
+          mimeType = result.mime_type;
+        }
+
+        setPendingAttachments((prev) => [...prev, {
+          filename: result.filename,
+          url: (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000") + result.url,
+          isImage: result.is_image,
+          size: result.size,
+          base64Data,
+          mimeType,
+        }]);
+      } catch {
+        toast(t(lang, "uploadFailed"), "error");
+      }
+    }
+    // Reset input
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -122,8 +161,35 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
         <div ref={bottomRef} />
       </div>
 
-      {/* Input area: agent selector above, input below */}
+      {/* Input area */}
       <div style={{ padding: "12px 24px 16px", borderTop: "1px solid var(--border)" }}>
+        {/* Pending attachments preview */}
+        {pendingAttachments.length > 0 && (
+          <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+            {pendingAttachments.map((att, i) => (
+              <div key={i} style={{
+                position: "relative", padding: 4, background: "var(--bg-secondary)",
+                border: "1px solid var(--border)", borderRadius: 6,
+              }}>
+                {att.isImage ? (
+                  <img src={att.url} alt={att.filename} style={{ width: 60, height: 60, objectFit: "cover", borderRadius: 4 }} />
+                ) : (
+                  <div style={{ width: 60, height: 60, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "var(--text-muted)" }}>
+                    {att.filename.slice(-10)}
+                  </div>
+                )}
+                <button onClick={() => setPendingAttachments((prev) => prev.filter((_, j) => j !== i))} style={{
+                  position: "absolute", top: -4, right: -4, width: 18, height: 18, borderRadius: 9,
+                  background: "var(--error)", border: "none", color: "#fff", fontSize: 10, cursor: "pointer",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                }}>x</button>
+                <div style={{ fontSize: 9, color: "var(--text-muted)", textAlign: "center", marginTop: 2, maxWidth: 60, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {att.filename}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t(lang, "selectAgent")}:</span>
           <select value={selectedAgentId} onChange={(e) => setSelectedAgentId(e.target.value)} style={{
@@ -135,6 +201,11 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
           </select>
         </div>
         <div style={{ display: "flex", gap: 12 }}>
+          <input ref={fileInputRef} type="file" onChange={handleFileSelect} accept="image/*,.pdf,.txt,.csv,.json,.md,.py,.js,.ts,.html,.css" multiple style={{ display: "none" }} />
+          <button onClick={() => fileInputRef.current?.click()} disabled={isStreaming} style={{
+            padding: "10px 12px", fontSize: 14, background: "var(--bg-tertiary)",
+            border: "1px solid var(--border)", borderRadius: 8, color: "var(--text-secondary)", cursor: "pointer",
+          }}>+</button>
           <input value={input} onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown} placeholder={t(lang, "typePlaceholder")} disabled={isStreaming}
             style={{
@@ -189,6 +260,21 @@ function MessageBubble({ message }: { message: StreamMessage }) {
           </div>
         )}
         {message.content}
+        {message.attachments && message.attachments.length > 0 && (
+          <div style={{ marginTop: 8, display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {message.attachments.map((att, i) => (
+              <div key={i}>
+                {att.isImage ? (
+                  <img src={att.url} alt={att.filename} style={{ maxWidth: 200, maxHeight: 150, borderRadius: 6, border: "1px solid var(--border)" }} />
+                ) : (
+                  <span style={{ padding: "4px 8px", fontSize: 11, background: isUser ? "rgba(255,255,255,0.2)" : "var(--bg-tertiary)", borderRadius: 4 }}>
+                    {att.filename}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

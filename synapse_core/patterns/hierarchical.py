@@ -11,6 +11,7 @@ from synapse_core.streaming import StreamEvent, run_start, run_end, agent_think,
 from synapse_core.tools import ToolRegistry
 from synapse_core.graph import GraphBuilder
 from synapse_core.graph.state import TokenUsage
+from synapse_core.observability import get_hub
 
 
 class HierarchicalPattern:
@@ -36,15 +37,24 @@ class HierarchicalPattern:
     async def run(self, task: str, run_id: str | None = None) -> AsyncIterator[StreamEvent]:
         run_id = run_id or str(uuid.uuid4())
         start_time = time.monotonic()
+        total_usage = TokenUsage()
 
         yield run_start(run_id, self.root.id)
 
         try:
             async for event in self._run_recursive(task, self.root, run_id, depth=0):
                 yield event
+                if event.type == "run:end":
+                    worker_usage = event.data.get("tokenUsage", event.data.get("token_usage", {}))
+                    if worker_usage:
+                        total_usage = total_usage.add(TokenUsage(
+                            prompt_tokens=worker_usage.get("prompt_tokens", 0),
+                            completion_tokens=worker_usage.get("completion_tokens", 0),
+                            total_tokens=worker_usage.get("total_tokens", 0),
+                        ))
 
             duration = (time.monotonic() - start_time) * 1000
-            yield run_end(run_id, {"total_tokens": 0}, duration)
+            yield run_end(run_id, total_usage.model_dump(), duration)
         except Exception as e:
             yield run_error(run_id, str(e), recoverable=True)
 

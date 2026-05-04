@@ -57,6 +57,37 @@ MODEL_PROFILES: dict[str, ModelProfile] = {
         input_cost_per_1k=0.0008, output_cost_per_1k=0.004,
         context_window=200000, capability=TaskComplexity.MODERATE, latency_tier=1,
     ),
+    # Domestic models (Chinese LLM ecosystem)
+    "glm-4-plus": ModelProfile(
+        model="glm-4-plus", provider="openai",
+        input_cost_per_1k=0.05, output_cost_per_1k=0.05,
+        context_window=128000, capability=TaskComplexity.COMPLEX, latency_tier=2,
+    ),
+    "glm-4-flash": ModelProfile(
+        model="glm-4-flash", provider="openai",
+        input_cost_per_1k=0.0001, output_cost_per_1k=0.0001,
+        context_window=128000, capability=TaskComplexity.SIMPLE, latency_tier=1,
+    ),
+    "qwen-max": ModelProfile(
+        model="qwen-max", provider="openai",
+        input_cost_per_1k=0.02, output_cost_per_1k=0.06,
+        context_window=32000, capability=TaskComplexity.COMPLEX, latency_tier=2,
+    ),
+    "qwen-turbo": ModelProfile(
+        model="qwen-turbo", provider="openai",
+        input_cost_per_1k=0.002, output_cost_per_1k=0.006,
+        context_window=128000, capability=TaskComplexity.MODERATE, latency_tier=1,
+    ),
+    "deepseek-chat": ModelProfile(
+        model="deepseek-chat", provider="openai",
+        input_cost_per_1k=0.001, output_cost_per_1k=0.002,
+        context_window=64000, capability=TaskComplexity.COMPLEX, latency_tier=1,
+    ),
+    "deepseek-reasoner": ModelProfile(
+        model="deepseek-reasoner", provider="openai",
+        input_cost_per_1k=0.004, output_cost_per_1k=0.016,
+        context_window=64000, capability=TaskComplexity.COMPLEX, latency_tier=3,
+    ),
 }
 
 
@@ -73,7 +104,12 @@ class ModelRouter:
         self._fallback_chains: dict[str, list[str]] = {
             "openai": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"],
             "anthropic": ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"],
+            "glm": ["glm-4-plus", "glm-4-flash"],
+            "qwen": ["qwen-max", "qwen-turbo"],
+            "deepseek": ["deepseek-chat", "deepseek-reasoner"],
         }
+        # Cross-family fallback: when all models in a family fail
+        self._cross_family_fallback = ["deepseek-chat", "glm-4-flash", "gpt-4o-mini"]
 
     def classify_complexity(self, messages: list[LLMMessage], **kwargs: Any) -> TaskComplexity:
         """Classify task complexity from message content."""
@@ -165,12 +201,32 @@ class ModelRouter:
         try:
             return await provider.invoke(messages, **kwargs)
         except Exception:
-            # Try fallback chain
+            # Try same-family fallback chain first
             fallback_chain = self._fallback_chains.get(profile.provider, [])
             for fallback_model in fallback_chain:
                 if fallback_model == model_name:
                     continue
                 fb_profile = self.profiles.get(fallback_model)
+                if not fb_profile:
+                    continue
+                fb_config = LLMConfig(
+                    provider=fb_profile.provider,
+                    model=fb_profile.model,
+                    temperature=config.temperature,
+                    max_tokens=config.max_tokens,
+                )
+                try:
+                    fb_provider = create_provider(fb_config)
+                    return await fb_provider.invoke(messages, **kwargs)
+                except Exception:
+                    continue
+
+            # Cross-family fallback: try models from other families
+            tried = set(fallback_chain) | {model_name}
+            for cross_model in self._cross_family_fallback:
+                if cross_model in tried:
+                    continue
+                fb_profile = self.profiles.get(cross_model)
                 if not fb_profile:
                     continue
                 fb_config = LLMConfig(

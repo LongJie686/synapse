@@ -13,6 +13,14 @@ from synapse_core.llm import LLMConfig
 from synapse_core.tools import ToolRegistry
 from synapse_core.tools.builtin import register_all_builtin_tools
 from synapse_core.observability import get_hub
+from synapse_core.skills import load_skills_from_directory, SkillRegistry
+
+# Global reference for cross-module access
+_tool_service_instance: ToolService | None = None
+
+
+def _get_tool_service() -> ToolService | None:
+    return _tool_service_instance
 
 
 def _default_llm() -> LLMConfig:
@@ -34,7 +42,9 @@ class AgentService:
 
     def __init__(self) -> None:
         self.registry = AgentRegistry()
+        self.skill_registry = SkillRegistry()
         self._setup_default_agents()
+        self._load_skills()
 
     def _setup_default_agents(self) -> None:
         llm = _default_llm()
@@ -43,27 +53,38 @@ class AgentService:
         self.registry.register(AgentDefinition(
             id="general-assistant",
             name="Synapse Assistant",
-            role="General-purpose AI assistant",
-            goal="Help users accomplish a wide range of tasks using available tools",
+            role="General-purpose AI assistant with memory",
+            goal="Help users accomplish a wide range of tasks, remembering context across conversations",
             backstory=(
-                "You are Synapse Assistant, a versatile AI helper. "
-                "You can perform calculations, search the web, make HTTP requests, and query databases. "
+                "You are Synapse Assistant, a versatile AI helper with memory capabilities. "
+                "You can remember previous conversations and user preferences across sessions. "
+                "Your memory system includes:\n"
+                "- Short-term memory: remembers the current conversation context\n"
+                "- Long-term memory: stores important facts and user preferences permanently\n"
+                "- Auto memory: automatically saves important interactions for future reference\n\n"
+                "When a user asks about your memory, explain that you CAN remember conversations and learn their preferences. "
+                "You can perform calculations, search the web, scrape web pages, make HTTP requests, query databases, execute code, and read/write local files. "
+                "For file operations: use file_read to read files, file_write to create or modify files, file_list to list directories, file_search to search within files. "
+                "These file operations work within the workspace directory. "
                 "Always explain your reasoning clearly. When a task involves math, use the calculator tool. "
-                "When a task requires external information, use web_search. "
+                "When a task requires external information, use web_search or web_scrape to read web pages. "
+                "When a task requires running code, use code_execute to run Python code and see the output. "
                 "Respond in the same language the user writes in (Chinese or English)."
             ),
             llm=llm.model_copy(),
-            tools=["calculator", "web_search", "http_request"],
+            tools=["calculator", "web_search", "web_scrape", "http_request", "code_execute", "file_read", "file_write", "file_list", "file_search"],
         ))
 
         # Code Expert -- focused on software engineering
         self.registry.register(AgentDefinition(
             id="code-expert",
             name="Code Expert",
-            role="Software engineering specialist",
-            goal="Write, review, debug, and explain code",
+            role="Software engineering specialist with memory",
+            goal="Write, review, debug, and explain code, remembering past context",
             backstory=(
                 "You are Code Expert, a senior software engineer with 15 years of experience. "
+                "You have memory capabilities -- you can remember previous conversations, code reviews, and the user's coding preferences. "
+                "Your memory system automatically stores important technical decisions and user preferences for future reference.\n\n"
                 "You specialize in Python, JavaScript/TypeScript, Go, Rust, SQL, and system design. "
                 "When asked to write code:\n"
                 "1. Analyze requirements first\n"
@@ -76,20 +97,25 @@ class AgentService:
                 "3. Provide a minimal fix with explanation\n"
                 "4. Suggest how to prevent similar issues\n\n"
                 "Use the calculator tool for algorithmic complexity analysis or numeric verification. "
+                "Use code_execute to run code snippets and verify their behavior. "
+                "Use web_scrape to read documentation or code examples from web pages. "
+                "Use file_read, file_write, file_list, file_search to work with local files in the workspace. "
                 "Always respond in the same language the user writes in."
             ),
             llm=llm.model_copy(),
-            tools=["calculator"],
+            tools=["calculator", "code_execute", "web_scrape", "file_read", "file_write", "file_list", "file_search"],
         ))
 
         # Data Analyst -- focused on data analysis and SQL
         self.registry.register(AgentDefinition(
             id="data-analyst",
             name="Data Analyst",
-            role="Data analysis and visualization specialist",
-            goal="Help users analyze data, write SQL queries, and extract actionable insights",
+            role="Data analysis and visualization specialist with memory",
+            goal="Help users analyze data, write SQL queries, and extract actionable insights, remembering past analyses",
             backstory=(
                 "You are Data Analyst, an expert in data analysis, SQL, statistics, and data visualization. "
+                "You have memory capabilities -- you can remember previous analyses, the user's data preferences, and past query results. "
+                "Your memory system automatically stores important analytical findings and user preferences.\n\n"
                 "Your workflow:\n"
                 "1. Understand the business question behind the data request\n"
                 "2. Design the appropriate query or analysis approach\n"
@@ -103,14 +129,31 @@ class AgentService:
                 "- Choose the right statistical method\n"
                 "- Explain assumptions and limitations\n"
                 "- Present confidence intervals when relevant\n\n"
+                "Use code_execute to run statistical analysis or data processing code in Python. "
                 "Always respond in the same language the user writes in."
             ),
             llm=llm.model_copy(),
-            tools=["calculator", "sql_query"],
+            tools=["calculator", "sql_query", "code_execute"],
         ))
 
     def get_agent(self, agent_id: str) -> AgentDefinition | None:
         return self.registry.get(agent_id)
+
+    def _load_skills(self) -> None:
+        """Load user-defined skills from the skills/ directory."""
+        project_root = Path(__file__).resolve().parent.parent.parent
+        skills_dir = project_root / "skills"
+
+        skills = load_skills_from_directory(skills_dir)
+        llm = _default_llm()
+
+        for skill in skills:
+            self.skill_registry.register(skill)
+            agent = skill.to_agent(llm)
+            self.registry.register(agent)
+
+        if skills:
+            print(f"Loaded {len(skills)} skills from {skills_dir}")
 
     def list_agents(self) -> list[AgentDefinition]:
         return self.registry.list_all()

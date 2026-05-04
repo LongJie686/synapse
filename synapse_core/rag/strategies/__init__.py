@@ -134,12 +134,11 @@ class AdaptiveRAG:
         return "conversational"
 
     def _select_retriever(self, query_type: str) -> BaseRetriever:
-        match query_type:
-            case "factual":
-                return VectorRetriever(self._chunks, self._embedding_provider)
-            case "analytical":
-                return HybridRetriever(self._chunks, self._embedding_provider)
-            case "navigational":
-                return MMRRetriever(self._chunks, self._embedding_provider, lambda_param=0.3)
-            case _:
-                return VectorRetriever(self._chunks, self._embedding_provider)
+        if query_type == "factual":
+            return VectorRetriever(self._chunks, self._embedding_provider)
+        elif query_type == "analytical":
+            return HybridRetriever(self._chunks, self._embedding_provider)
+        elif query_type == "navigational":
+            return MMRRetriever(self._chunks, self._embedding_provider, lambda_param=0.3)
+        else:
+            return VectorRetriever(self._chunks, self._embedding_provider)

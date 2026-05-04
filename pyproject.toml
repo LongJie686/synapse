@@ -8,6 +8,7 @@ license = { text = "Apache-2.0" }
 
 [project.scripts]
 synapse-dev = "scripts.dev:main"
+synapse = "synapse_core.cli:main"
 
 [tool.uv.workspace]
 members = [

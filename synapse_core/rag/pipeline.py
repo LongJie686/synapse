@@ -14,9 +14,9 @@ from synapse_core.rag import (
     RetrievalResult,
     RAGPipelineConfig,
 )
-from synapse_core.rag.loaders import TextLoader, MarkdownLoader, DirectoryLoader
+from synapse_core.rag.loaders import TextLoader, MarkdownLoader, PDFLoader, DocxLoader, DirectoryLoader
 from synapse_core.rag.splitters import RecursiveTextSplitter, CodeSplitter, SemanticSplitter
-from synapse_core.rag.embedding import OpenAIEmbeddingProvider
+from synapse_core.rag.embedding import LocalEmbeddingProvider
 from synapse_core.rag.strategies import BasicRAG, SelfRAG, CorrectiveRAG, AdaptiveRAG
 
 
@@ -36,7 +36,7 @@ class RAGPipeline:
         embedding_provider: BaseEmbeddingProvider | None = None,
     ) -> None:
         self._config = config or RAGPipelineConfig()
-        self._embedding_provider = embedding_provider or OpenAIEmbeddingProvider()
+        self._embedding_provider = embedding_provider or LocalEmbeddingProvider()
         self._chunks: list[DocumentChunk] = []
         self._collections: dict[str, KnowledgeCollection] = {}
 
@@ -56,12 +56,15 @@ class RAGPipeline:
             chunks = splitter.split(doc, self._config.chunk_size, self._config.chunk_overlap)
             all_chunks.extend(chunks)
 
-        # Step 3: Generate embeddings
+        # Step 3: Generate embeddings (graceful degradation if unavailable)
         texts = [c.content for c in all_chunks if c.content.strip()]
         if texts:
-            embeddings = await self._embedding_provider.embed_batch(texts)
-            for chunk, embedding in zip(all_chunks, embeddings):
-                chunk.embedding = embedding
+            try:
+                embeddings = await self._embedding_provider.embed_batch(texts)
+                for chunk, embedding in zip(all_chunks, embeddings):
+                    chunk.embedding = embedding
+            except Exception:
+                pass  # Chunks stored without embeddings; BM25 retrieval still works
 
         # Step 4: Store
         self._chunks.extend(all_chunks)
@@ -114,32 +117,32 @@ class RAGPipeline:
         loaders: dict[str, type[BaseDocumentLoader]] = {
             ".txt": TextLoader,
             ".md": MarkdownLoader,
+            ".pdf": PDFLoader,
+            ".docx": DocxLoader,
         }
         loader_cls = loaders.get(suffix, TextLoader)
         return loader_cls()
 
     def _get_splitter(self) -> BaseTextSplitter:
-        match self._config.splitter_type:
-            case "code":
-                return CodeSplitter()
-            case "semantic":
-                return SemanticSplitter()
-            case _:
-                return RecursiveTextSplitter()
+        st = self._config.splitter_type
+        if st == "code":
+            return CodeSplitter()
+        if st == "semantic":
+            return SemanticSplitter()
+        return RecursiveTextSplitter()
 
-    def _create_strategy(self) -> BasicRAG | SelfRAG | CorrectiveRAG | AdaptiveRAG:
+    def _create_strategy(self):
         from synapse_core.rag.retrieval import VectorRetriever
         retriever = VectorRetriever(self._chunks, self._embedding_provider)
 
-        match self._config.strategy:
-            case "self-rag":
-                return SelfRAG(retriever)
-            case "corrective-rag":
-                return CorrectiveRAG(retriever)
-            case "adaptive-rag":
-                return AdaptiveRAG(self._chunks, self._embedding_provider)
-            case _:
-                return BasicRAG(retriever)
+        s = self._config.strategy
+        if s == "self-rag":
+            return SelfRAG(retriever)
+        if s == "corrective-rag":
+            return CorrectiveRAG(retriever)
+        if s == "adaptive-rag":
+            return AdaptiveRAG(self._chunks, self._embedding_provider)
+        return BasicRAG(retriever)
 
     def list_collections(self) -> list[KnowledgeCollection]:
         return list(self._collections.values())

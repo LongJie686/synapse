@@ -4,16 +4,17 @@ A production-grade multi-agent collaboration framework built on LangGraph, with 
 
 ## Features
 
-- **Multi-Agent Orchestration** -- 4 patterns out of the box: Supervisor (LLM routing), Parallel (async fan-out/fan-in), Hierarchical (recursive delegation), Collaboration (multi-round discussion)
+- **Multi-Agent Orchestration** -- 6 patterns: Supervisor, Parallel, Hierarchical, Collaboration, Plan-Execute, Crew
 - **Intelligent Memory System** -- Three-layer architecture (working/short-term/long-term) with auto context compaction, user profile auto-update, and importance-based long-term memory save
-- **RAG Knowledge Management** -- 4 strategies (Basic/Self-RAG/Corrective-RAG/Adaptive-RAG), 3 retrieval methods (Vector/Hybrid/MMR), pluggable document loaders
+- **RAG Knowledge Management** -- 4 strategies (Basic/Self-RAG/Corrective-RAG/Adaptive-RAG), 3 retrieval methods (Vector/Hybrid/MMR), local BGE embedding (free, offline), PDF/DOCX/TXT/MD loaders
 - **Safety Guardrails** -- Input filtering (9 injection patterns), output filtering (credential redaction), PII detection (7 types), content moderation (4 categories)
-- **Tool System** -- Built-in tools (calculator, web search, HTTP, SQL) with rate limiting, permission checks, and sandboxed execution
-- **Cost-Aware LLM Router** -- Automatic model selection based on task complexity with fallback chains across OpenAI and Anthropic
+- **Tool System** -- Built-in tools (calculator, web search, HTTP, SQL, code execution, file operations) with rate limiting, permission checks, and sandboxed execution
+- **Cost-Aware LLM Router** -- Automatic model selection based on task complexity with fallback chains across GLM, OpenAI, Anthropic, and Ollama
 - **Structured Output** -- Pydantic model to validated LLM JSON output with retry logic
-- **Full Observability** -- Structured logging, span-based tracing, metrics (counters/gauges/histograms), LangSmith integration
-- **Plugin System** -- Extensible via ToolPlugin, AgentPlugin, GuardrailPlugin with directory-based auto-loading
-- **API Server** -- FastAPI with SSE streaming, 22 REST endpoints, rate limiting, CORS
+- **Full Observability** -- Structured logging, span-based tracing, token usage tracking, metrics (counters/gauges/histograms), LangSmith integration, Prometheus endpoint
+- **Plugin System** -- Extensible via ToolPlugin, AgentPlugin, GuardrailPlugin with directory-based auto-loading + MCP client + Skills YAML
+- **CLI Interface** -- Full-featured command line with streaming output, session management, knowledge commands, cost tracking
+- **API Server** -- FastAPI with SSE streaming, 22+ REST endpoints, rate limiting, CORS
 - **Docker Deployment** -- One-command deployment with PostgreSQL (pgvector) + Redis
 
 ## Architecture
@@ -44,7 +45,7 @@ synapse/
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.9+
 - [uv](https://github.com/astral-sh/uv) package manager
 
 ### Install
@@ -52,7 +53,7 @@ synapse/
 ```bash
 git clone https://github.com/LongJie686/synapse.git
 cd synapse
-uv venv --python 3.11
+uv venv --python 3.9
 uv sync
 ```
 
@@ -194,13 +195,15 @@ print(result.sentiment)  # "positive"
 
 | Layer | Technology |
 |-------|-----------|
+| Multi-Agent | Supervisor, Parallel, Hierarchical, Collaboration, Plan-Execute, Crew |
 | Core Engine | LangGraph + LangChain |
 | API Server | FastAPI + Uvicorn + SSE |
 | Database | PostgreSQL + pgvector |
 | Cache | Redis |
-| LLM | OpenAI + Anthropic |
+| LLM | Anthropic + OpenAI + Ollama |
+| Embedding | BGE-small-zh-v1.5 (local, free) |
 | Validation | Pydantic v2 |
-| Observability | Structured Logging + LangSmith |
+| Observability | Structured Logging + LangSmith + Prometheus |
 | Deployment | Docker Compose |
 
 ## License

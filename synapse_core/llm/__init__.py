@@ -15,11 +15,14 @@ class LLMConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 4096
     top_p: float = 1.0
+    frequency_penalty: float = 0.0
+    presence_penalty: float = 0.0
+    stop: list[str] | None = None
 
 
 class LLMMessage(BaseModel):
     role: Literal["system", "user", "assistant", "tool"]
-    content: str
+    content: str | list[dict[str, Any]]  # str for text, list for multimodal (text + images)
     name: str | None = None
     tool_call_id: str | None = None
 

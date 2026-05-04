@@ -306,8 +306,14 @@ class ObservabilityHub:
         trace = self.tracer.end_trace()
         self.langsmith.end_run(run_id, outputs={"token_usage": token_usage})
         if token_usage:
-            for model, count in token_usage.items():
-                self.metrics.observe("tokens.usage", count)
+            prompt_t = token_usage.get("prompt_tokens", 0)
+            completion_t = token_usage.get("completion_tokens", 0)
+            total_t = token_usage.get("total_tokens", 0)
+            self.metrics.increment("tokens.prompt", prompt_t)
+            self.metrics.increment("tokens.completion", completion_t)
+            self.metrics.increment("tokens.total", total_t)
+            for key, val in token_usage.items():
+                self.metrics.observe("tokens.usage", val)
         self.logger.info("Run completed", extra={
             "struct_data": {"run_id": run_id, "duration_ms": trace.duration_ms if trace else 0}
         })

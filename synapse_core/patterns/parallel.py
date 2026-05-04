@@ -12,6 +12,7 @@ from synapse_core.streaming import StreamEvent, run_start, run_end, agent_think,
 from synapse_core.tools import ToolRegistry
 from synapse_core.graph import GraphBuilder
 from synapse_core.graph.state import TokenUsage
+from synapse_core.observability import get_hub
 
 
 class ParallelPattern:
@@ -37,6 +38,7 @@ class ParallelPattern:
     async def run(self, task: str, run_id: str | None = None) -> AsyncIterator[StreamEvent]:
         run_id = run_id or str(uuid.uuid4())
         start_time = time.monotonic()
+        total_usage = TokenUsage()
 
         yield run_start(run_id, "parallel-coordinator")
         yield agent_think("parallel-coordinator", f"Launching {len(self.agents)} agents in parallel")
@@ -56,12 +58,20 @@ class ParallelPattern:
                 for event in result:
                     if event.type == "agent:message":
                         merged_content.append(f"[{self.agents[i].name}]: {event.data.get('content', '')}")
+                    if event.type == "run:end":
+                        worker_usage = event.data.get("tokenUsage", event.data.get("token_usage", {}))
+                        if worker_usage:
+                            total_usage = total_usage.add(TokenUsage(
+                                prompt_tokens=worker_usage.get("prompt_tokens", 0),
+                                completion_tokens=worker_usage.get("completion_tokens", 0),
+                                total_tokens=worker_usage.get("total_tokens", 0),
+                            ))
 
         final_output = "\n\n---\n\n".join(merged_content) if merged_content else "No results from agents."
         yield agent_message("parallel-coordinator", final_output)
 
         duration = (time.monotonic() - start_time) * 1000
-        yield run_end(run_id, {"total_tokens": 0}, duration)
+        yield run_end(run_id, total_usage.model_dump(), duration)
 
     async def _run_agent(self, builder: GraphBuilder, task: str, run_id: str) -> list[StreamEvent]:
         """Run a single agent and collect its events."""

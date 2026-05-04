@@ -42,3 +42,6 @@ synapse_web/out/
 data/
 synapse_core/data/
 .codeartsdoer/
+
+# MCP server config (may contain secrets)
+config/mcp_servers.json

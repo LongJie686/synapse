@@ -27,8 +27,12 @@ class RecursiveTextSplitter(BaseTextSplitter):
         if len(text) <= chunk_size:
             return [text]
 
-        separator = separators[0] if separators else " "
-        remaining_separators = separators[1:] if len(separators) > 1 else [" "]
+        if not separators:
+            # All separators exhausted - force split by character boundary
+            return [text[i:i + chunk_size] for i in range(0, len(text), chunk_size)]
+
+        separator = separators[0]
+        remaining_separators = separators[1:]
 
         splits = text.split(separator)
         chunks: list[str] = []
@@ -42,7 +46,6 @@ class RecursiveTextSplitter(BaseTextSplitter):
                 if current:
                     chunks.append(current)
                 if len(split) > chunk_size:
-                    # Need to split further with next separator
                     chunks.extend(self._recursive_split(split, remaining_separators, chunk_size))
                     current = ""
                 else:

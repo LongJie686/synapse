@@ -2,11 +2,26 @@
 
 import { useCallback, useRef, useState } from "react";
 
+export interface AttachedFile {
+  filename: string;
+  url: string;
+  isImage: boolean;
+  size: number;
+  base64Data?: string;  // base64 encoded image data for LLM vision
+  mimeType?: string;
+}
+
 export interface StreamMessage {
   role: "user" | "assistant";
   content: string;
   toolCalls?: { name: string; input: string; result?: string }[];
   isStreaming?: boolean;
+  attachments?: AttachedFile[];
+}
+
+export interface TitleUpdate {
+  sessionId: string;
+  title: string;
 }
 
 export function useStream() {
@@ -14,153 +29,193 @@ export function useStream() {
   const [isStreaming, setIsStreaming] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
-  const sendMessage = useCallback(async (content: string, agentId?: string, sessionId?: string) => {
-    const userMsg: StreamMessage = { role: "user", content };
-    const assistantMsg: StreamMessage = { role: "assistant", content: "", isStreaming: true, toolCalls: [] };
+  const sendMessage = useCallback(
+    async (
+      content: string,
+      agentId?: string,
+      sessionId?: string,
+      onTitleUpdate?: (update: TitleUpdate) => void,
+      attachments?: AttachedFile[],
+    ) => {
+      // Create abort controller for this request
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    setMessages((prev) => [...prev, userMsg, assistantMsg]);
-    setIsStreaming(true);
+      const userMsg: StreamMessage = { role: "user", content, attachments };
+      const assistantMsg: StreamMessage = {
+        role: "assistant",
+        content: "",
+        isStreaming: true,
+        toolCalls: [],
+      };
 
-    const currentIdx = { value: 0 };
-    setMessages((prev) => {
-      currentIdx.value = prev.length - 1;
-      return prev;
-    });
+      setMessages((prev) => [...prev, userMsg, assistantMsg]);
+      setIsStreaming(true);
 
-    try {
-      const body: Record<string, string> = { message: content };
-      if (agentId) body.agent_id = agentId;
-      if (sessionId) body.session_id = sessionId;
-
-      // SSE stream must go directly to backend to avoid Next.js proxy buffering
-      const streamUrl = process.env.NEXT_PUBLIC_API_URL
-        ? `${process.env.NEXT_PUBLIC_API_URL}/api/runs/stream`
-        : "http://localhost:8000/api/runs/stream";
-
-      const res = await fetch(streamUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        signal: abortRef.current?.signal,
+      // Track the assistant message index
+      const currentIdx = { value: 0 };
+      setMessages((prev) => {
+        currentIdx.value = prev.length - 1;
+        return prev;
       });
 
-      if (!res.ok || !res.body) throw new Error("Stream failed");
+      try {
+        const body: Record<string, string> = { message: content };
+        if (agentId) body.agent_id = agentId;
+        if (sessionId) body.session_id = sessionId;
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      let fullContent = "";
+        // Append attachment info to message for LLM context
+        const images: { mime_type: string; data: string }[] = [];
+        if (attachments && attachments.length > 0) {
+          const attachmentDesc = attachments.map((a) => {
+            if (a.isImage) return `[Image: ${a.filename}]`;
+            return `[File: ${a.filename}]`;
+          }).join(" ");
+          body.message = `${content}\n\nAttached files:\n${attachmentDesc}`;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        // SSE events are separated by double newlines
-        const events = buffer.split("\n\n");
-        buffer = events.pop() || "";
-
-        for (const eventText of events) {
-          if (!eventText.trim()) continue;
-
-          let eventType = "";
-          let eventData = "";
-
-          for (const line of eventText.split("\n")) {
-            if (line.startsWith("event:")) {
-              eventType = line.slice(6).trim();
-            } else if (line.startsWith("data:")) {
-              eventData = line.slice(5).trim();
+          // Collect base64 image data for multimodal LLM call
+          for (const att of attachments) {
+            if (att.isImage && att.base64Data && att.mimeType) {
+              images.push({ mime_type: att.mimeType, data: att.base64Data });
             }
-          }
-
-          if (!eventData) continue;
-
-          try {
-            const data = JSON.parse(eventData);
-
-            if (eventType === "run:error") {
-              fullContent = data.error || "Unknown error";
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[currentIdx.value] = {
-                  ...updated[currentIdx.value],
-                  content: fullContent,
-                  isStreaming: false,
-                };
-                return updated;
-              });
-              return;
-            }
-
-            if (eventType === "agent:call_tool" && data.toolName) {
-              setMessages((prev) => {
-                const updated = [...prev];
-                const msg = { ...updated[currentIdx.value] };
-                msg.toolCalls = [...(msg.toolCalls || []), { name: data.toolName, input: JSON.stringify(data.input) }];
-                updated[currentIdx.value] = msg;
-                return updated;
-              });
-            }
-
-            if (eventType === "tool:result" && data.toolName) {
-              setMessages((prev) => {
-                const updated = [...prev];
-                const msg = { ...updated[currentIdx.value] };
-                const calls = [...(msg.toolCalls || [])];
-                const lastCall = calls[calls.length - 1];
-                if (lastCall) {
-                  calls[calls.length - 1] = { ...lastCall, result: String(data.output) };
-                }
-                msg.toolCalls = calls;
-                updated[currentIdx.value] = msg;
-                return updated;
-              });
-            }
-
-            if (eventType === "agent:message" && typeof data.content === "string") {
-              fullContent = data.content;
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[currentIdx.value] = {
-                  ...updated[currentIdx.value],
-                  content: fullContent,
-                };
-                return updated;
-              });
-            }
-          } catch {
-            // skip malformed JSON
           }
         }
-      }
 
-      setMessages((prev) => {
-        const updated = [...prev];
-        updated[currentIdx.value] = {
-          ...updated[currentIdx.value],
-          content: fullContent || "(no response)",
-          isStreaming: false,
-        };
-        return updated;
-      });
-    } catch (err) {
-      if ((err as Error).name !== "AbortError") {
+        const reqBody: Record<string, unknown> = { ...body, images: images.length > 0 ? images : undefined };
+
+        const streamUrl = process.env.NEXT_PUBLIC_API_URL
+          ? `${process.env.NEXT_PUBLIC_API_URL}/api/runs/stream`
+          : "http://localhost:8000/api/runs/stream";
+
+        const res = await fetch(streamUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(reqBody),
+          signal: controller.signal,
+        });
+
+        if (!res.ok || !res.body) throw new Error("Stream failed");
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let fullContent = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // NDJSON: each line is a JSON object
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+
+            try {
+              const event = JSON.parse(trimmed);
+              const { type, data } = event;
+
+              if (type === "run:error") {
+                fullContent = data.error || "Unknown error";
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[currentIdx.value] = {
+                    ...updated[currentIdx.value],
+                    content: fullContent,
+                    isStreaming: false,
+                  };
+                  return updated;
+                });
+                return;
+              }
+
+              if (type === "agent:call_tool" && data.toolName) {
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const msg = { ...updated[currentIdx.value] };
+                  msg.toolCalls = [
+                    ...(msg.toolCalls || []),
+                    { name: data.toolName, input: JSON.stringify(data.input) },
+                  ];
+                  updated[currentIdx.value] = msg;
+                  return updated;
+                });
+              }
+
+              if (type === "tool:result" && data.toolName) {
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  const msg = { ...updated[currentIdx.value] };
+                  const calls = [...(msg.toolCalls || [])];
+                  const lastCall = calls[calls.length - 1];
+                  if (lastCall) {
+                    calls[calls.length - 1] = {
+                      ...lastCall,
+                      result: String(data.output),
+                    };
+                  }
+                  msg.toolCalls = calls;
+                  updated[currentIdx.value] = msg;
+                  return updated;
+                });
+              }
+
+              if (
+                type === "agent:message" &&
+                typeof data.content === "string"
+              ) {
+                fullContent = data.content;
+                setMessages((prev) => {
+                  const updated = [...prev];
+                  updated[currentIdx.value] = {
+                    ...updated[currentIdx.value],
+                    content: fullContent,
+                  };
+                  return updated;
+                });
+              }
+
+              if (type === "session:title_update" && data.session_id && data.title) {
+                onTitleUpdate?.({ sessionId: data.session_id, title: data.title });
+              }
+            } catch (parseErr) {
+              console.warn("SSE parse error, skipping line:", trimmed, parseErr);
+            }
+          }
+        }
+
         setMessages((prev) => {
           const updated = [...prev];
           updated[currentIdx.value] = {
             ...updated[currentIdx.value],
-            content: "Error: failed to get response",
+            content: fullContent || "(no response)",
             isStreaming: false,
           };
           return updated;
         });
+      } catch (err) {
+        if ((err as Error).name !== "AbortError") {
+          setMessages((prev) => {
+            const updated = [...prev];
+            updated[currentIdx.value] = {
+              ...updated[currentIdx.value],
+              content: "Error: failed to get response",
+              isStreaming: false,
+            };
+            return updated;
+          });
+        }
+      } finally {
+        setIsStreaming(false);
+        abortRef.current = null;
       }
-    } finally {
-      setIsStreaming(false);
-    }
-  }, []);
+    },
+    [],
+  );
 
   const stop = useCallback(() => {
     abortRef.current?.abort();

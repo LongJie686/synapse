@@ -31,16 +31,21 @@ async def list_agents() -> list[dict]:
     if not _agent_service:
         return []
     agents = _agent_service.list_agents()
-    return [
-        {
+    skills = _agent_service.skill_registry.list_all() if hasattr(_agent_service, "skill_registry") else []
+    skill_names = {f"skill-{s.name}" for s in skills}
+
+    result = []
+    for a in agents:
+        entry = {
             "id": a.id,
             "name": a.name,
             "role": a.role,
             "goal": a.goal,
             "tools": a.tools,
+            "is_skill": a.id in skill_names,
         }
-        for a in agents
-    ]
+        result.append(entry)
+    return result
 
 
 @router.get("/agents/{agent_id}")

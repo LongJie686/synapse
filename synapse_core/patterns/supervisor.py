@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from typing import Any, AsyncIterator
 
@@ -13,6 +14,7 @@ from synapse_core.streaming import StreamEvent, run_start, run_end, agent_think,
 from synapse_core.tools import ToolRegistry
 from synapse_core.graph import GraphBuilder
 from synapse_core.graph.state import RunState, Message, TokenUsage
+from synapse_core.observability import get_hub
 
 
 class SupervisorPattern:
@@ -57,9 +59,10 @@ You can delegate to at most {self.max_delegations} agents per conversation."""
 
     async def run(self, user_input: str, run_id: str | None = None) -> AsyncIterator[StreamEvent]:
         run_id = run_id or str(uuid.uuid4())
-        start_time = __import__("time").monotonic()
+        start_time = time.monotonic()
         total_usage = TokenUsage()
         all_messages: list[Message] = []
+        hub = get_hub()
 
         yield run_start(run_id, self.supervisor.id)
 
@@ -72,8 +75,20 @@ You can delegate to at most {self.max_delegations} agents per conversation."""
                 LLMMessage(role="user", content=user_input),
             ]
 
+            t0 = time.monotonic()
             routing_response = await self._supervisor_provider.invoke(routing_messages)
-            total_usage = total_usage.add(TokenUsage(**routing_response.usage) if routing_response.usage else TokenUsage())
+            routing_duration = (time.monotonic() - t0) * 1000
+
+            if routing_response.usage:
+                usage_data = routing_response.usage
+                total_usage = total_usage.add(TokenUsage(**usage_data))
+                hub.track_llm_call(
+                    provider=self.supervisor.llm.provider,
+                    model=routing_response.model or self.supervisor.llm.model,
+                    tokens_in=usage_data.get("prompt_tokens", 0),
+                    tokens_out=usage_data.get("completion_tokens", 0),
+                    duration_ms=routing_duration,
+                )
 
             yield agent_think(self.supervisor.id, f"Routing decision: {routing_response.content[:200]}")
 
@@ -103,7 +118,13 @@ You can delegate to at most {self.max_delegations} agents per conversation."""
                     async for event in worker_builder.run(task, run_id):
                         yield event
                         if event.type == "run:end":
-                            duration = event.data.get("durationMs", 0)
+                            worker_usage = event.data.get("tokenUsage", event.data.get("token_usage", {}))
+                            if worker_usage:
+                                total_usage = total_usage.add(TokenUsage(
+                                    prompt_tokens=worker_usage.get("prompt_tokens", 0),
+                                    completion_tokens=worker_usage.get("completion_tokens", 0),
+                                    total_tokens=worker_usage.get("total_tokens", 0),
+                                ))
                         # Collect worker messages
                         if event.type == "agent:message":
                             all_messages.append(Message(role="assistant", content=event.data.get("content", "")))
@@ -113,7 +134,7 @@ You can delegate to at most {self.max_delegations} agents per conversation."""
                         f"I couldn't find the right specialist for this task. Let me try to help directly.\n\n{routing_response.content}",
                     )
 
-            duration = (__import__("time").monotonic() - start_time) * 1000
+            duration = (time.monotonic() - start_time) * 1000
             yield run_end(run_id, total_usage.model_dump(), duration)
 
         except Exception as e:

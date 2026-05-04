@@ -52,17 +52,16 @@ class MemoryManager:
         self._auto_save_importance = auto_save_importance
 
         # Short-term memory
-        match short_term_type:
-            case "conversation-buffer":
-                self._short_term: ConversationBuffer | SlidingWindow | SummaryBuffer = ConversationBuffer()
-            case "sliding-window":
-                self._short_term = SlidingWindow(window_size=20)
-            case _:
-                self._short_term = SummaryBuffer(
-                    max_tokens=max_context_tokens,
-                    compaction_threshold=compaction_threshold,
-                    summarize_fn=summarize_fn,
-                )
+        if short_term_type == "conversation-buffer":
+            self._short_term: ConversationBuffer | SlidingWindow | SummaryBuffer = ConversationBuffer()
+        elif short_term_type == "sliding-window":
+            self._short_term = SlidingWindow(window_size=20)
+        else:
+            self._short_term = SummaryBuffer(
+                max_tokens=max_context_tokens,
+                compaction_threshold=compaction_threshold,
+                summarize_fn=summarize_fn,
+            )
 
         # User profile extractor
         self._profile_extractor = ProfileExtractor(summarize_fn=summarize_fn)

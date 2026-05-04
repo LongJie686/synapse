@@ -3,16 +3,27 @@
 import { useState, useEffect, useCallback } from "react";
 import ChatPanel, { Conversation } from "@/components/ChatPanel";
 import AgentsPanel from "@/components/AgentsPanel";
+import MultiAgentPanel from "@/components/MultiAgentPanel";
 import MetricsPanel from "@/components/MetricsPanel";
+import SkillsPanel from "@/components/SkillsPanel";
+import MCPPanel from "@/components/MCPPanel";
+import SchedulerPanel from "@/components/SchedulerPanel";
+import ErrorBoundary from "@/components/ErrorBoundary";
+import { ToastProvider } from "@/components/Toast";
 import { Lang, I18nKey, t } from "@/lib/i18n";
 import { SessionInfo, fetchSessions, createSession, deleteSession as apiDeleteSession } from "@/lib/api";
+import { TitleUpdate } from "@/hooks/useStream";
 
-type Tab = "chat" | "agents" | "metrics";
+type Tab = "chat" | "agents" | "multi-agent" | "skills" | "mcp" | "scheduler" | "metrics";
 
 const TAB_KEYS: { id: Tab; labelKey: I18nKey; icon: string }[] = [
   { id: "chat", labelKey: "chat", icon: "C" },
   { id: "agents", labelKey: "agents", icon: "A" },
-  { id: "metrics", labelKey: "metrics", icon: "M" },
+  { id: "multi-agent", labelKey: "multiAgentTitle", icon: "M+" },
+  { id: "skills", labelKey: "skillsTitle", icon: "S" },
+  { id: "mcp", labelKey: "mcpTitle", icon: "M" },
+  { id: "scheduler", labelKey: "schedulerTitle", icon: "T" },
+  { id: "metrics", labelKey: "metrics", icon: "X" },
 ];
 
 export default function Home() {
@@ -37,10 +48,10 @@ export default function Home() {
         }));
         setConversations(convs);
       })
-      .catch(() => {});
+      .catch((err) => { console.error("Failed to load sessions:", err); });
   }, []);
 
-  const handleNewChat = useCallback(async () => {
+  const handleNewChat = useCallback(async (): Promise<string> => {
     try {
       const result = await createSession({ agent_id: "general-assistant", title: "" });
       const id = result.session_id;
@@ -54,8 +65,9 @@ export default function Home() {
       };
       setConversations((prev) => [newConv, ...prev]);
       setActiveConvId(id);
+      return id;
     } catch {
-      // Fallback: local-only conversation
+      // Fallback: local-only conversation (backend unreachable)
       const id = `local-${Date.now()}`;
       const newConv: Conversation = {
         id,
@@ -67,11 +79,12 @@ export default function Home() {
       };
       setConversations((prev) => [newConv, ...prev]);
       setActiveConvId(id);
+      return id;
     }
   }, [lang, conversations.length]);
 
   const handleDeleteConv = useCallback(async (convId: string) => {
-    try { await apiDeleteSession(convId); } catch { /* local conv */ }
+    try { await apiDeleteSession(convId); } catch { /* local-only session, skip */ }
     setConversations((prev) => prev.filter((c) => c.id !== convId));
     if (activeConvId === convId) setActiveConvId(null);
   }, [activeConvId]);
@@ -80,7 +93,14 @@ export default function Home() {
     setConversations((prev) => prev.map((c) => c.id === convId ? updater(c) : c));
   }, []);
 
+  const handleTitleUpdate = useCallback((update: TitleUpdate) => {
+    setConversations((prev) => prev.map((c) =>
+      c.id === update.sessionId ? { ...c, title: update.title } : c,
+    ));
+  }, []);
+
   return (
+    <ToastProvider>
     <div style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
       {/* Sidebar */}
       <nav style={{
@@ -184,6 +204,7 @@ export default function Home() {
       </nav>
 
       <main style={{ flex: 1, overflow: "hidden" }}>
+        <ErrorBoundary>
         {activeTab === "chat" && (
           <ChatPanel
             lang={lang}
@@ -191,11 +212,18 @@ export default function Home() {
             activeConvId={activeConvId}
             onUpdateConv={handleUpdateConv}
             onNewChat={handleNewChat}
+            onTitleUpdate={handleTitleUpdate}
           />
         )}
         {activeTab === "agents" && <AgentsPanel lang={lang} />}
+        {activeTab === "skills" && <SkillsPanel lang={lang} />}
+        {activeTab === "mcp" && <MCPPanel lang={lang} />}
+        {activeTab === "scheduler" && <SchedulerPanel lang={lang} />}
         {activeTab === "metrics" && <MetricsPanel lang={lang} />}
+        {activeTab === "multi-agent" && <MultiAgentPanel lang={lang} />}
+        </ErrorBoundary>
       </main>
     </div>
+    </ToastProvider>
   );
 }

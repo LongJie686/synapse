@@ -11,6 +11,7 @@ from synapse_core.llm import LLMMessage
 from synapse_core.llm.providers import create_provider
 from synapse_core.streaming import StreamEvent, run_start, run_end, agent_think, agent_message, run_error
 from synapse_core.graph.state import TokenUsage
+from synapse_core.observability import get_hub
 
 
 class CollaborationPattern:
@@ -39,6 +40,8 @@ class CollaborationPattern:
     async def run(self, topic: str, run_id: str | None = None) -> AsyncIterator[StreamEvent]:
         run_id = run_id or str(uuid.uuid4())
         start_time = time.monotonic()
+        total_usage = TokenUsage()
+        hub = get_hub()
 
         yield run_start(run_id, "collaboration")
 
@@ -57,7 +60,24 @@ class CollaborationPattern:
                     messages.append(LLMMessage(role="user", content=f"Discussion so far:\n{context}\n\nProvide your analysis:"))
 
                 provider = self._providers[agent.id]
+                t0 = time.monotonic()
                 response = await provider.invoke(messages)
+                call_duration = (time.monotonic() - t0) * 1000
+
+                if response.usage:
+                    u = response.usage
+                    total_usage = total_usage.add(TokenUsage(
+                        prompt_tokens=u.get("prompt_tokens", 0),
+                        completion_tokens=u.get("completion_tokens", 0),
+                        total_tokens=u.get("total_tokens", 0),
+                    ))
+                    hub.track_llm_call(
+                        provider=agent.llm.provider,
+                        model=response.model or agent.llm.model,
+                        tokens_in=u.get("prompt_tokens", 0),
+                        tokens_out=u.get("completion_tokens", 0),
+                        duration_ms=call_duration,
+                    )
 
                 contribution = f"[{agent.name}]: {response.content}"
                 discussion.append(contribution)
@@ -72,7 +92,24 @@ class CollaborationPattern:
 
             messages = [LLMMessage(role="system", content=synthesis_prompt)]
             mod_provider = self._providers[self.moderator.id]
+            t0 = time.monotonic()
             synthesis = await mod_provider.invoke(messages)
+            call_duration = (time.monotonic() - t0) * 1000
+
+            if synthesis.usage:
+                u = synthesis.usage
+                total_usage = total_usage.add(TokenUsage(
+                    prompt_tokens=u.get("prompt_tokens", 0),
+                    completion_tokens=u.get("completion_tokens", 0),
+                    total_tokens=u.get("total_tokens", 0),
+                ))
+                hub.track_llm_call(
+                    provider=self.moderator.llm.provider,
+                    model=synthesis.model or self.moderator.llm.model,
+                    tokens_in=u.get("prompt_tokens", 0),
+                    tokens_out=u.get("completion_tokens", 0),
+                    duration_ms=call_duration,
+                )
 
             yield agent_message(self.moderator.id, synthesis.content)
         else:
@@ -81,7 +118,7 @@ class CollaborationPattern:
             yield agent_message("collaboration", combined)
 
         duration = (time.monotonic() - start_time) * 1000
-        yield run_end(run_id, {"total_tokens": 0}, duration)
+        yield run_end(run_id, total_usage.model_dump(), duration)
 
     def _build_agent_prompt(self, agent: AgentDefinition, topic: str, context: str, round_num: int) -> str:
         return f"""You are {agent.name}, {agent.role}.

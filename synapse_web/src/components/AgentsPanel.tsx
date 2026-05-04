@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { AgentInfo, fetchAgents, createAgent, deleteAgent } from "@/lib/api";
 import { Lang, t, agentName, agentRole } from "@/lib/i18n";
+import { useToast } from "@/components/Toast";
 
 interface Props { lang: Lang }
 
@@ -11,9 +12,10 @@ export default function AgentsPanel({ lang }: Props) {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ id: "", name: "", role: "", goal: "", model: "glm-4-flash", tools: "calculator" });
+  const { toast, confirm: toastConfirm } = useToast();
 
   const load = async () => {
-    try { setLoading(true); setAgents(await fetchAgents()); } catch {} finally { setLoading(false); }
+    try { setLoading(true); setAgents(await fetchAgents()); } catch { toast("Failed to load agents", "error"); } finally { setLoading(false); }
   };
 
   useEffect(() => { load(); }, []);
@@ -25,12 +27,12 @@ export default function AgentsPanel({ lang }: Props) {
       setShowForm(false);
       setForm({ id: "", name: "", role: "", goal: "", model: "glm-4-flash", tools: "calculator" });
       load();
-    } catch (err) { alert((err as Error).message); }
+    } catch (err) { toast((err as Error).message, "error"); }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm(t(lang, "deleteConfirm"))) return;
-    await deleteAgent(id); load();
+    if (!await toastConfirm(t(lang, "deleteConfirm"))) return;
+    try { await deleteAgent(id); load(); } catch (err) { toast((err as Error).message, "error"); }
   };
 
   const inputStyle = {
