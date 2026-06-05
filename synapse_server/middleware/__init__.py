@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Sliding window rate limiter per client IP."""
 
+    # Sweep stale entries every 5 minutes regardless of traffic
+    _CLEANUP_INTERVAL = 300
+
     def __init__(
         self,
         app: Any,
@@ -28,17 +31,26 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self.window_seconds = window_seconds
         self.trust_proxy = trust_proxy
         self._clients: dict[str, list[float]] = {}
+        self._last_cleanup: float = time.time()
 
     def _get_client_id(self, request: Request) -> str:
-        # Only trust X-Forwarded-For when explicitly deployed behind a known proxy
         if self.trust_proxy:
             forwarded = request.headers.get("x-forwarded-for")
             if forwarded:
                 return forwarded.split(",")[0].strip()
         return request.client.host if request.client else "unknown"
 
-    def _is_rate_limited(self, client_id: str) -> bool:
-        now = time.time()
+    def _purge_stale(self, now: float) -> None:
+        """Remove entries whose entire timestamp window has expired."""
+        if now - self._last_cleanup < self._CLEANUP_INTERVAL:
+            return
+        cutoff = now - self.window_seconds
+        stale = [cid for cid, ts in self._clients.items() if not ts or ts[-1] <= cutoff]
+        for cid in stale:
+            del self._clients[cid]
+        self._last_cleanup = now
+
+    def _is_rate_limited(self, client_id: str, now: float) -> bool:
         if client_id not in self._clients:
             self._clients[client_id] = [now]
             return False
@@ -54,9 +66,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return False
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        client_id = self._get_client_id(request)
+        now = time.time()
+        self._purge_stale(now)
 
-        if self._is_rate_limited(client_id):
+        client_id = self._get_client_id(request)
+        if self._is_rate_limited(client_id, now):
             return Response(
                 content='{"detail":"Rate limit exceeded"}',
                 status_code=429,
