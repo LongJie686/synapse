@@ -33,8 +33,9 @@ def create_app() -> FastAPI:
 
     api_key = os.environ.get("API_KEY") or None
 
-    # Middleware (order matters: outermost first)
-    app.add_middleware(SecurityHeadersMiddleware)
+    # Middleware registration — Starlette processes in LIFO order.
+    # Last registered = outermost (first to handle request, last to handle response).
+    # Desired order (outermost→innermost): SecurityHeaders → CORS → RateLimit → APIKey → ErrorHandling → routes
     app.add_middleware(ErrorHandlingMiddleware)
     app.add_middleware(APIKeyMiddleware, api_key=api_key)
     trust_proxy = os.environ.get("TRUST_PROXY", "false").lower() == "true"
@@ -49,8 +50,10 @@ def create_app() -> FastAPI:
         allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+        allow_headers=["Content-Type", "Authorization", "X-Requested-With", "X-API-Key"],
     )
+    # SecurityHeaders last = outermost, so it wraps ALL responses including 401/429/500
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # Initialize services
     agent_svc = AgentService()

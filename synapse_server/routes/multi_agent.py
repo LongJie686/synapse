@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 from synapse_core.agent import AgentDefinition
 from synapse_core.llm import LLMConfig
@@ -112,8 +115,9 @@ async def stream_multi_agent(request: MultiAgentRequest) -> StreamingResponse:
                 line = json.dumps({"type": event.type, "data": event.data}, ensure_ascii=False)
                 yield line + "\n"
 
-        except Exception as e:
-            yield json.dumps({"type": "run:error", "data": {"runId": run_id, "error": str(e)}}, ensure_ascii=False) + "\n"
+        except Exception:
+            logger.exception("Multi-agent run %s failed", run_id)
+            yield json.dumps({"type": "run:error", "data": {"runId": run_id, "error": "Internal error occurred"}}, ensure_ascii=False) + "\n"
         finally:
             hub.track_run_end(run_id, token_usage=last_token_usage)
 

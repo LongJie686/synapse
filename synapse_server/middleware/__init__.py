@@ -88,7 +88,8 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
     Paths in EXEMPT_PATHS are always accessible without a key.
     """
 
-    EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json"}
+    EXEMPT_PATHS = {"/health", "/docs", "/redoc", "/openapi.json", "/"}
+    PROTECTED_NON_API = {"/metrics"}
 
     def __init__(self, app: Any, api_key: str | None = None) -> None:
         super().__init__(app)
@@ -104,7 +105,10 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         path = request.url.path
-        if path in self.EXEMPT_PATHS or not path.startswith("/api/"):
+        if path in self.EXEMPT_PATHS:
+            return await call_next(request)
+        # Protect /api/* and explicitly listed non-api paths (e.g. /metrics)
+        if not path.startswith("/api/") and path not in self.PROTECTED_NON_API:
             return await call_next(request)
 
         # OPTIONS pre-flight must pass through for CORS to work

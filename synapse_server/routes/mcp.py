@@ -17,8 +17,21 @@ _mcp_client = None
 _ALLOWED_COMMANDS = {"uvx", "npx", "node", "python", "python3", "deno"}
 
 _SAFE_SERVER_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
-# Args must not contain shell metacharacters
-_SAFE_ARG = re.compile(r'^[^;&|`$<>"\'\\\n\r]+$')
+
+# Args: deny shell metacharacters and path traversal
+_SAFE_ARG = re.compile(r'^[^;&|`$<>"\'\\\n\r/]+$')
+
+# Env var names that can alter dynamic linker / interpreter search paths — deny override
+_BLOCKED_ENV_KEYS = {
+    "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT", "LD_DEBUG",
+    "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH",
+    "PATH", "PYTHONPATH", "PYTHONSTARTUP", "PYTHONEXECUTABLE",
+    "HOME", "USER", "LOGNAME", "SHELL",
+    "NODE_OPTIONS", "NODE_PATH",
+    "DENO_DIR",
+}
+
+_SAFE_ENV_KEY = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 
 
 def configure(mcp_client) -> None:
@@ -32,6 +45,16 @@ class MCPServerCreateRequest(BaseModel):
     args: list[str] = []
     env: dict[str, str] = {}
     url: str = ""
+
+    @field_validator("env")
+    @classmethod
+    def validate_env(cls, v: dict) -> dict:
+        for key in v:
+            if not _SAFE_ENV_KEY.match(key):
+                raise ValueError(f"env key '{key}' is not a valid environment variable name")
+            if key in _BLOCKED_ENV_KEYS:
+                raise ValueError(f"env key '{key}' is not allowed (reserved/dangerous variable)")
+        return v
 
     @field_validator("name")
     @classmethod
@@ -55,8 +78,13 @@ class MCPServerCreateRequest(BaseModel):
         for arg in v:
             if not isinstance(arg, str):
                 raise ValueError("each arg must be a string")
+            if not arg:
+                raise ValueError("args must not contain empty strings")
             if not _SAFE_ARG.match(arg):
                 raise ValueError(f"arg contains disallowed characters: {arg!r}")
+            # Extra check: deny path traversal patterns regardless of regex
+            if ".." in arg or arg.startswith("/") or arg.startswith("\\"):
+                raise ValueError(f"arg must not be an absolute path or contain '..': {arg!r}")
         return v
 
     @field_validator("url")

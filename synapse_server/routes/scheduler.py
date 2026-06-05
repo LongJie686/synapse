@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import re
+
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 router = APIRouter()
 
 _scheduler = None
+
+# Standard 5-field cron: minute hour day month weekday
+# Each field: digits, *, /, -, , combinations
+_CRON_FIELD = r"(\*|(\*\/\d+)|(\d+(-\d+)?(,\d+(-\d+)?)*)(\/\d+)?)"
+_CRON_RE = re.compile(rf"^{_CRON_FIELD}\s+{_CRON_FIELD}\s+{_CRON_FIELD}\s+{_CRON_FIELD}\s+{_CRON_FIELD}$")
+
+
+def _validate_cron(v: str) -> str:
+    if not _CRON_RE.match(v.strip()):
+        raise ValueError("Invalid cron expression. Expected 5-field format: minute hour day month weekday")
+    return v.strip()
 
 
 def configure(scheduler) -> None:
@@ -22,6 +35,11 @@ class TaskCreateRequest(BaseModel):
     agent_id: str = "general-assistant"
     description: str = ""
 
+    @field_validator("cron")
+    @classmethod
+    def validate_cron(cls, v: str) -> str:
+        return _validate_cron(v)
+
 
 class TaskUpdateRequest(BaseModel):
     name: str | None = None
@@ -30,6 +48,11 @@ class TaskUpdateRequest(BaseModel):
     cron: str | None = None
     agent_id: str | None = None
     enabled: bool | None = None
+
+    @field_validator("cron")
+    @classmethod
+    def validate_cron(cls, v: str | None) -> str | None:
+        return _validate_cron(v) if v is not None else None
 
 
 @router.get("/scheduler/tasks")

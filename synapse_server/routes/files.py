@@ -29,6 +29,12 @@ _ALLOWED_EXTENSIONS = {
     ".pdf", ".docx", ".txt", ".md", ".csv", ".xlsx", ".json",
 }
 
+_ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp"}
+
+_ALLOWED_IMAGE_MIME_TYPES = {
+    "image/jpeg", "image/png", "image/gif", "image/webp", "image/bmp",
+}
+
 
 def _ensure_upload_dir() -> Path:
     _upload_dir.mkdir(parents=True, exist_ok=True)
@@ -122,15 +128,25 @@ async def delete_file(file_id: str) -> dict:
 
 @router.post("/files/read-image")
 async def read_image(file: UploadFile = File(...)) -> dict:
-    """Read an image file and return base64 encoded data with description."""
+    """Read an image file and return base64 encoded data."""
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in _ALLOWED_IMAGE_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{ext}' not allowed. Only images are accepted.",
+        )
 
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 20MB)")
 
-    mime_type = file.content_type or "image/png"
+    # Validate and sanitize mime type — never trust client-supplied Content-Type
+    raw_mime = (file.content_type or "").lower().split(";")[0].strip()
+    mime_type = raw_mime if raw_mime in _ALLOWED_IMAGE_MIME_TYPES else "image/jpeg"
+
     b64 = base64.b64encode(content).decode("utf-8")
 
     return {

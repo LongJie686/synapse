@@ -58,8 +58,7 @@ async def web_scrape_handler(
 
     try:
         async with httpx.AsyncClient(
-            follow_redirects=True,
-            max_redirects=5,
+            follow_redirects=False,
             timeout=15.0,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -67,7 +66,23 @@ async def web_scrape_handler(
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
             },
         ) as client:
-            resp = await client.get(url)
+            current_url = url
+            for _ in range(5):
+                resp = await client.get(current_url)
+                if resp.status_code in (301, 302, 303, 307, 308):
+                    location = resp.headers.get("location", "")
+                    if not location:
+                        break
+                    # Resolve relative redirects against current URL
+                    next_url = str(httpx.URL(current_url).copy_with()).rstrip("/")
+                    next_url = str(httpx.URL(location)) if location.startswith("http") else f"{next_url}{location}"
+                    try:
+                        await check_ssrf(next_url)
+                    except ValueError as ssrf_err:
+                        return f"Error: redirect blocked — {ssrf_err}"
+                    current_url = next_url
+                    continue
+                break
             resp.raise_for_status()
             html = resp.text
     except httpx.HTTPError as e:

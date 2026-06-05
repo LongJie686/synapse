@@ -110,14 +110,15 @@ class MCPClient:
         from mcp.client.stdio import stdio_client
         from mcp import ClientSession, StdioServerParameters
 
-        # Build environment
-        env = dict(os.environ)
-        env.update(config.env)
+        # Merge user-supplied env on top of the current process environment.
+        # config.env has already been validated by MCPServerCreateRequest to exclude
+        # dangerous keys (LD_PRELOAD, PATH, PYTHONPATH, etc.).
+        merged_env = {**os.environ, **config.env} if config.env else None
 
         server_params = StdioServerParameters(
             command=config.command,
             args=config.args,
-            env=env if config.env else None,
+            env=merged_env,
         )
 
         async with stdio_client(server_params) as (read_stream, write_stream):
