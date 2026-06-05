@@ -123,7 +123,7 @@ export default function ChatPanel({ lang, conversations, activeConvId, onUpdateC
 
         setPendingAttachments((prev) => [...prev, {
           filename: result.filename,
-          url: (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000") + result.url,
+          url: result.url,
           isImage: result.is_image,
           size: result.size,
           base64Data,

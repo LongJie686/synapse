@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 router = APIRouter()
 
 _mcp_client = None
+
+# Allowed MCP launcher executables — no absolute paths, no shell builtins
+_ALLOWED_COMMANDS = {"uvx", "npx", "node", "python", "python3", "deno"}
+
+_SAFE_SERVER_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+# Args must not contain shell metacharacters
+_SAFE_ARG = re.compile(r'^[^;&|`$<>"\'\\\n\r]+$')
 
 
 def configure(mcp_client) -> None:
@@ -24,6 +32,39 @@ class MCPServerCreateRequest(BaseModel):
     args: list[str] = []
     env: dict[str, str] = {}
     url: str = ""
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        if not _SAFE_SERVER_NAME.match(v):
+            raise ValueError("name must be 1-64 alphanumeric/underscore/hyphen characters")
+        return v
+
+    @field_validator("command")
+    @classmethod
+    def validate_command(cls, v: str) -> str:
+        if v and v not in _ALLOWED_COMMANDS:
+            raise ValueError(
+                f"command must be one of: {', '.join(sorted(_ALLOWED_COMMANDS))}"
+            )
+        return v
+
+    @field_validator("args", mode="before")
+    @classmethod
+    def validate_args(cls, v: list) -> list:
+        for arg in v:
+            if not isinstance(arg, str):
+                raise ValueError("each arg must be a string")
+            if not _SAFE_ARG.match(arg):
+                raise ValueError(f"arg contains disallowed characters: {arg!r}")
+        return v
+
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        if v and not re.match(r"^https?://", v):
+            raise ValueError("url must start with http:// or https://")
+        return v
 
 
 @router.get("/mcp/servers")
@@ -66,6 +107,8 @@ async def add_server(req: MCPServerCreateRequest) -> dict:
 @router.delete("/mcp/servers/{server_name}")
 async def remove_server(server_name: str) -> dict:
     """Remove an MCP server configuration."""
+    if not _SAFE_SERVER_NAME.match(server_name):
+        raise HTTPException(status_code=400, detail="Invalid server name format")
     if not _mcp_client:
         raise HTTPException(status_code=500, detail="MCP client not available")
     if server_name not in _mcp_client._servers:
@@ -89,8 +132,8 @@ async def connect_servers() -> dict:
     try:
         count = await _mcp_client.connect_all(tool_svc.registry)
         return {"status": "connected", "tools_registered": count}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to connect to MCP servers")
 
 
 def _save_mcp_config(client) -> None:

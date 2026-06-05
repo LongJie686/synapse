@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from synapse_core.tools import ToolDefinition, ToolParameter, ToolSafetyConfig
+from synapse_core.tools.builtin._ssrf_guard import check_ssrf
 
 
 HTTP_REQUEST_DEF = ToolDefinition(
@@ -42,7 +44,12 @@ async def http_request_handler(
     if method not in ("GET", "POST", "PUT", "DELETE", "PATCH"):
         return f"Error: Unsupported method '{method}'"
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    try:
+        await check_ssrf(url)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
         request_fn = getattr(client, method.lower())
         request_kwargs: dict[str, Any] = {}
         if headers:

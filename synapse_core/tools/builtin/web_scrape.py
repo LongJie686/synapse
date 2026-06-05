@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from synapse_core.tools import ToolDefinition, ToolHandler, ToolSafetyConfig, ToolParameter
+from synapse_core.tools.builtin._ssrf_guard import check_ssrf
 
 
 SCRAPE_DEF = ToolDefinition(
@@ -51,8 +52,14 @@ async def web_scrape_handler(
     import httpx
 
     try:
+        await check_ssrf(url)
+    except ValueError as e:
+        return f"Error: {e}"
+
+    try:
         async with httpx.AsyncClient(
             follow_redirects=True,
+            max_redirects=5,
             timeout=15.0,
             headers={
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",

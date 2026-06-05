@@ -68,7 +68,7 @@ export default function Home() {
       return id;
     } catch {
       // Fallback: local-only conversation (backend unreachable)
-      const id = `local-${Date.now()}`;
+      const id = `local-${crypto.randomUUID()}`;
       const newConv: Conversation = {
         id,
         title: `${t(lang, "newChat")} ${conversations.length + 1}`,
@@ -196,7 +196,7 @@ export default function Home() {
             style={{ display: "block", padding: "8px 12px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none", borderRadius: 6 }}>
             {t(lang, "githubRepo")}
           </a>
-          <a href="http://localhost:8000/docs" target="_blank" rel="noopener noreferrer"
+          <a href={`${process.env.NEXT_PUBLIC_API_URL ?? ""}/docs`} target="_blank" rel="noopener noreferrer"
             style={{ display: "block", padding: "8px 12px", fontSize: 12, color: "var(--text-muted)", textDecoration: "none", borderRadius: 6 }}>
             {t(lang, "apiDocs")}
           </a>

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import os
+import re
 import uuid
 import base64
 from pathlib import Path
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -15,10 +16,35 @@ router = APIRouter()
 _project_root = Path(__file__).resolve().parent.parent.parent
 _upload_dir = _project_root / "data" / "uploads"
 
+# UUID + optional extension — matches stored filenames like "<uuid4>.<ext>"
+_SAFE_FILE_ID = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(\.[a-zA-Z0-9]{1,10})?$"
+)
+
+
+_ALLOWED_EXTENSIONS = {
+    # images
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+    # documents
+    ".pdf", ".docx", ".txt", ".md", ".csv", ".xlsx", ".json",
+}
+
 
 def _ensure_upload_dir() -> Path:
     _upload_dir.mkdir(parents=True, exist_ok=True)
     return _upload_dir
+
+
+def _resolve_safe_path(file_id: str) -> Path:
+    """Resolve file path and guard against path traversal."""
+    if not _SAFE_FILE_ID.match(file_id):
+        raise HTTPException(status_code=400, detail="Invalid file ID format")
+    resolved = (_upload_dir / file_id).resolve()
+    try:
+        resolved.relative_to(_upload_dir.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file path")
+    return resolved
 
 
 @router.post("/files/upload")
@@ -27,13 +53,19 @@ async def upload_file(file: UploadFile = File(...)) -> dict:
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
-    # Limit file size to 20MB
+    ext = Path(file.filename).suffix.lower()
+    if ext not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File type '{ext}' not allowed. Allowed: {', '.join(sorted(_ALLOWED_EXTENSIONS))}",
+        )
+
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="File too large (max 20MB)")
 
     _ensure_upload_dir()
-    ext = Path(file.filename).suffix or ""
+    ext = Path(file.filename).suffix.lower()
     file_id = str(uuid.uuid4())
     stored_name = f"{file_id}{ext}"
     file_path = _upload_dir / stored_name
@@ -51,14 +83,14 @@ async def upload_file(file: UploadFile = File(...)) -> dict:
         "size": len(content),
         "mime_type": mime_type,
         "is_image": is_image,
-        "url": f"/uploads/{stored_name}",
+        "url": f"/api/files/{stored_name}/download",
     }
 
 
 @router.get("/files/{file_id}")
 async def get_file(file_id: str) -> dict:
     """Get file metadata."""
-    file_path = _upload_dir / file_id
+    file_path = _resolve_safe_path(file_id)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     return {
@@ -69,10 +101,19 @@ async def get_file(file_id: str) -> dict:
     }
 
 
+@router.get("/files/{file_id}/download")
+async def download_file(file_id: str) -> FileResponse:
+    """Download a file by its stored name."""
+    file_path = _resolve_safe_path(file_id)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path=file_path, filename=file_id)
+
+
 @router.delete("/files/{file_id}")
 async def delete_file(file_id: str) -> dict:
     """Delete an uploaded file."""
-    file_path = _upload_dir / file_id
+    file_path = _resolve_safe_path(file_id)
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     file_path.unlink()

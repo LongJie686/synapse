@@ -86,7 +86,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 background: colors.border, color: "#fff", fontSize: 11, fontWeight: 700,
                 display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
               }}>{colors.icon}</span>
-              <span style={{ flex: 1 }}>{t.message}</span>
+              <span style={{ flex: 1 }}>{t.message.length > 200 ? t.message.slice(0, 200) + "..." : t.message}</span>
             </div>
           );
         })}

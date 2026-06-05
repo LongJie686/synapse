@@ -53,9 +53,13 @@ export default function MultiAgentPanel({ lang }: Props) {
     abortRef.current = controller;
 
     try {
+      const apiKey = process.env.NEXT_PUBLIC_API_KEY;
       const res = await fetch(getMultiAgentStreamUrl(), {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(apiKey ? { "X-API-Key": apiKey } : {}),
+        },
         body: JSON.stringify({ message: task, pattern, agent_ids: selectedAgents }),
         signal: controller.signal,
       });
@@ -92,7 +96,9 @@ export default function MultiAgentPanel({ lang }: Props) {
             } else if (type === "run:error") {
               setOutput((prev) => [...prev, { type: "error", text: data.error || "Unknown error" }]);
             }
-          } catch {}
+          } catch {
+            console.warn("Multi-agent SSE parse error: invalid JSON on stream line");
+          }
         }
       }
     } catch (err) {

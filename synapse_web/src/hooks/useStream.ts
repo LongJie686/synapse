@@ -83,13 +83,18 @@ export function useStream() {
 
         const reqBody: Record<string, unknown> = { ...body, images: images.length > 0 ? images : undefined };
 
-        const streamUrl = process.env.NEXT_PUBLIC_API_URL
-          ? `${process.env.NEXT_PUBLIC_API_URL}/api/runs/stream`
-          : "http://localhost:8000/api/runs/stream";
+        // SSE bypasses Next.js proxy to avoid response buffering.
+        // NEXT_PUBLIC_API_URL must be set in production (e.g. "http://backend:8000").
+        const apiOrigin = process.env.NEXT_PUBLIC_API_URL ?? "";
+        const streamUrl = `${apiOrigin}/api/runs/stream`;
 
+        const apiKey = process.env.NEXT_PUBLIC_API_KEY;
         const res = await fetch(streamUrl, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(apiKey ? { "X-API-Key": apiKey } : {}),
+          },
           body: JSON.stringify(reqBody),
           signal: controller.signal,
         });
@@ -182,8 +187,8 @@ export function useStream() {
               if (type === "session:title_update" && data.session_id && data.title) {
                 onTitleUpdate?.({ sessionId: data.session_id, title: data.title });
               }
-            } catch (parseErr) {
-              console.warn("SSE parse error, skipping line:", trimmed, parseErr);
+            } catch {
+              console.warn("SSE parse error: invalid JSON on stream line");
             }
           }
         }

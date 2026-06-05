@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { load as parseYaml } from "js-yaml";
 import { fetchSkills, createSkill, deleteSkill, reloadSkills, SkillInfo } from "@/lib/api";
 import { Lang, t } from "@/lib/i18n";
 import { useToast } from "@/components/Toast";
@@ -131,47 +132,28 @@ max_tokens: 4096
 
   const handleCreateYaml = async () => {
     try {
-      // Parse YAML-like content
-      const lines = yamlContent.split("\n");
-      const data: Record<string, string> = {};
-      let currentKey = "";
-      let currentValue = "";
-      let inBlock = false;
+      const raw = parseYaml(yamlContent) as Record<string, unknown>;
+      if (!raw || typeof raw !== "object") throw new Error("Invalid YAML: expected a mapping");
 
-      for (const line of lines) {
-        if (inBlock && line.startsWith("  ")) {
-          currentValue += "\n" + line.trim();
-          continue;
-        }
-        if (inBlock && currentKey) {
-          data[currentKey] = currentValue.trim();
-          inBlock = false;
-        }
-        const colonIdx = line.indexOf(":");
-        if (colonIdx === -1) continue;
-        currentKey = line.slice(0, colonIdx).trim();
-        const val = line.slice(colonIdx + 1).trim();
-        if (val === "|") {
-          inBlock = true;
-          currentValue = "";
-        } else if (val.startsWith("-")) {
-          // List item on same line or array shorthand
-          data[currentKey] = val;
-        } else {
-          data[currentKey] = val;
-        }
+      const str = (key: string, fallback = "") =>
+        typeof raw[key] === "string" ? (raw[key] as string) : fallback;
+
+      const toolsRaw = raw.tools;
+      let tools: string[] = ["calculator"];
+      if (Array.isArray(toolsRaw)) {
+        tools = toolsRaw.map(String).filter(Boolean);
+      } else if (typeof toolsRaw === "string" && toolsRaw.trim()) {
+        tools = toolsRaw.split(",").map((s) => s.trim()).filter(Boolean);
       }
-      if (inBlock && currentKey) data[currentKey] = currentValue.trim();
 
-      const toolsStr = (data.tools || "").replace(/-\s*/g, "").replace(/\n/g, ",").trim();
       await createSkill({
-        name: data.name || "",
-        display_name: data.display_name || data.name || "",
-        description: data.description || "",
-        tools: toolsStr ? toolsStr.split(",").map((s) => s.trim()).filter(Boolean) : ["calculator"],
-        system_prompt: data.system_prompt || "",
-        temperature: parseFloat(data.temperature || "0.7"),
-        max_tokens: parseInt(data.max_tokens || "4096"),
+        name: str("name"),
+        display_name: str("display_name") || str("name"),
+        description: str("description"),
+        tools,
+        system_prompt: str("system_prompt"),
+        temperature: parseFloat(str("temperature", "0.7")) || 0.7,
+        max_tokens: parseInt(str("max_tokens", "4096")) || 4096,
       });
       setShowForm(false);
       load();

@@ -8,10 +8,12 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
+from typing import Any
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from synapse_server.middleware import RateLimitMiddleware, ErrorHandlingMiddleware
+from synapse_server.middleware import RateLimitMiddleware, ErrorHandlingMiddleware, SecurityHeadersMiddleware, APIKeyMiddleware
 from synapse_server.services import AgentService, ToolService, SessionService, RunService
 from synapse_server.routes import runs, agents, sessions, knowledge, observability, scheduler, skills, mcp, files, multi_agent
 from synapse_core.scheduler import TaskScheduler
@@ -25,15 +27,29 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
+    # CORS origins from env — comma-separated list, e.g. "http://localhost:3000,https://app.example.com"
+    cors_origins_raw = os.environ.get("CORS_ORIGINS", "http://localhost:3000")
+    cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+
+    api_key = os.environ.get("API_KEY") or None
+
     # Middleware (order matters: outermost first)
+    app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(ErrorHandlingMiddleware)
-    app.add_middleware(RateLimitMiddleware, max_requests=60, window_seconds=60)
+    app.add_middleware(APIKeyMiddleware, api_key=api_key)
+    trust_proxy = os.environ.get("TRUST_PROXY", "false").lower() == "true"
+    app.add_middleware(
+        RateLimitMiddleware,
+        max_requests=60,
+        window_seconds=60,
+        trust_proxy=trust_proxy,
+    )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
     )
 
     # Initialize services
@@ -72,11 +88,9 @@ def create_app() -> FastAPI:
     app.include_router(mcp.router, prefix="/api", tags=["mcp"])
     app.include_router(files.router, prefix="/api", tags=["files"])
 
-    # Serve uploaded files as static assets (must come after API routes)
-    from fastapi.staticfiles import StaticFiles
+    # Ensure upload directory exists
     uploads_dir = Path(__file__).resolve().parent.parent / "data" / "uploads"
     uploads_dir.mkdir(parents=True, exist_ok=True)
-    app.mount("/uploads", StaticFiles(directory=str(uploads_dir)), name="uploads")
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -102,8 +116,8 @@ def create_app() -> FastAPI:
             hub = get_hub()
             summary = hub.get_summary()
             return {"status": "ok", "data": summary}
-        except Exception as e:
-            return {"status": "error", "error": str(e)}
+        except Exception:
+            return {"status": "error"}
 
     return app
 

@@ -1,5 +1,12 @@
 const API_BASE = "/api";
 
+function apiFetch(input: string, init?: RequestInit): Promise<Response> {
+  const key = process.env.NEXT_PUBLIC_API_KEY;
+  const headers = new Headers(init?.headers);
+  if (key) headers.set("X-API-Key", key);
+  return fetch(input, { ...init, headers });
+}
+
 export interface AgentInfo {
   id: string;
   name: string;
@@ -30,19 +37,19 @@ export interface Metrics {
 }
 
 export async function fetchAgents(): Promise<AgentInfo[]> {
-  const res = await fetch(`${API_BASE}/agents`);
+  const res = await apiFetch(`${API_BASE}/agents`);
   if (!res.ok) throw new Error("Failed to fetch agents");
   return res.json();
 }
 
 export async function fetchAgent(id: string): Promise<AgentInfo> {
-  const res = await fetch(`${API_BASE}/agents/${id}`);
+  const res = await apiFetch(`${API_BASE}/agents/${id}`);
   if (!res.ok) throw new Error("Failed to fetch agent");
   return res.json();
 }
 
 export async function createAgent(data: Partial<AgentInfo> & { id: string; name: string; role: string }): Promise<AgentInfo> {
-  const res = await fetch(`${API_BASE}/agents`, {
+  const res = await apiFetch(`${API_BASE}/agents`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -52,12 +59,12 @@ export async function createAgent(data: Partial<AgentInfo> & { id: string; name:
 }
 
 export async function deleteAgent(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/agents/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/agents/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete agent");
 }
 
 export async function createSession(data: { agent_id?: string; user_id?: string; title?: string }): Promise<SessionInfo> {
-  const res = await fetch(`${API_BASE}/sessions`, {
+  const res = await apiFetch(`${API_BASE}/sessions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -67,18 +74,18 @@ export async function createSession(data: { agent_id?: string; user_id?: string;
 }
 
 export async function fetchSessions(): Promise<SessionInfo[]> {
-  const res = await fetch(`${API_BASE}/sessions`);
+  const res = await apiFetch(`${API_BASE}/sessions`);
   if (!res.ok) throw new Error("Failed to fetch sessions");
   return res.json();
 }
 
 export async function deleteSession(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/sessions/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/sessions/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete session");
 }
 
 export async function createRun(message: string, agentId?: string, sessionId?: string): Promise<RunResponse> {
-  const res = await fetch(`${API_BASE}/runs`, {
+  const res = await apiFetch(`${API_BASE}/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, agent_id: agentId, session_id: sessionId }),
@@ -88,13 +95,13 @@ export async function createRun(message: string, agentId?: string, sessionId?: s
 }
 
 export async function fetchMetrics(): Promise<Metrics> {
-  const res = await fetch(`${API_BASE}/metrics`);
+  const res = await apiFetch(`${API_BASE}/metrics`);
   if (!res.ok) throw new Error("Failed to fetch metrics");
   return res.json();
 }
 
 export async function checkHealth(): Promise<{ status: string }> {
-  const res = await fetch(`${API_BASE}/health`);
+  const res = await apiFetch(`${API_BASE}/health`);
   if (!res.ok) throw new Error("Health check failed");
   return res.json();
 }
@@ -104,7 +111,7 @@ export function getStreamUrl(): string {
 }
 
 export async function fetchMultiAgentPatterns(): Promise<{ patterns: { id: string; name: string; description: string }[] }> {
-  const res = await fetch(`${API_BASE}/multi-agent/patterns`);
+  const res = await apiFetch(`${API_BASE}/multi-agent/patterns`);
   if (!res.ok) throw new Error("Failed to fetch patterns");
   return res.json();
 }
@@ -125,7 +132,7 @@ export interface SkillInfo {
 }
 
 export async function fetchSkills(): Promise<SkillInfo[]> {
-  const res = await fetch(`${API_BASE}/skills`);
+  const res = await apiFetch(`${API_BASE}/skills`);
   if (!res.ok) throw new Error("Failed to fetch skills");
   return res.json();
 }
@@ -139,7 +146,7 @@ export async function createSkill(data: {
   temperature?: number;
   max_tokens?: number;
 }): Promise<{ name: string; status: string }> {
-  const res = await fetch(`${API_BASE}/skills`, {
+  const res = await apiFetch(`${API_BASE}/skills`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -149,12 +156,12 @@ export async function createSkill(data: {
 }
 
 export async function deleteSkill(name: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/skills/${name}`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/skills/${name}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete skill");
 }
 
 export async function reloadSkills(): Promise<{ status: string; count: number }> {
-  const res = await fetch(`${API_BASE}/skills/reload`, { method: "POST" });
+  const res = await apiFetch(`${API_BASE}/skills/reload`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to reload skills");
   return res.json();
 }
@@ -172,7 +179,7 @@ export interface MCPServerInfo {
 }
 
 export async function fetchMCPServers(): Promise<MCPServerInfo[]> {
-  const res = await fetch(`${API_BASE}/mcp/servers`);
+  const res = await apiFetch(`${API_BASE}/mcp/servers`);
   if (!res.ok) throw new Error("Failed to fetch MCP servers");
   return res.json();
 }
@@ -184,7 +191,7 @@ export async function addMCPServer(data: {
   env?: Record<string, string>;
   url?: string;
 }): Promise<{ name: string; status: string }> {
-  const res = await fetch(`${API_BASE}/mcp/servers`, {
+  const res = await apiFetch(`${API_BASE}/mcp/servers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -194,12 +201,12 @@ export async function addMCPServer(data: {
 }
 
 export async function removeMCPServer(name: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/mcp/servers/${name}`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/mcp/servers/${name}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to remove MCP server");
 }
 
 export async function connectMCPServers(): Promise<{ status: string; tools_registered: number }> {
-  const res = await fetch(`${API_BASE}/mcp/connect`, { method: "POST" });
+  const res = await apiFetch(`${API_BASE}/mcp/connect`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to connect MCP servers");
   return res.json();
 }
@@ -221,7 +228,7 @@ export interface ScheduledTaskInfo {
 }
 
 export async function fetchScheduledTasks(): Promise<ScheduledTaskInfo[]> {
-  const res = await fetch(`${API_BASE}/scheduler/tasks`);
+  const res = await apiFetch(`${API_BASE}/scheduler/tasks`);
   if (!res.ok) throw new Error("Failed to fetch tasks");
   return res.json();
 }
@@ -233,7 +240,7 @@ export async function createScheduledTask(data: {
   agent_id?: string;
   description?: string;
 }): Promise<ScheduledTaskInfo> {
-  const res = await fetch(`${API_BASE}/scheduler/tasks`, {
+  const res = await apiFetch(`${API_BASE}/scheduler/tasks`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -246,7 +253,7 @@ export async function updateScheduledTask(
   id: string,
   data: Partial<ScheduledTaskInfo>,
 ): Promise<ScheduledTaskInfo> {
-  const res = await fetch(`${API_BASE}/scheduler/tasks/${id}`, {
+  const res = await apiFetch(`${API_BASE}/scheduler/tasks/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -256,12 +263,12 @@ export async function updateScheduledTask(
 }
 
 export async function deleteScheduledTask(id: string): Promise<void> {
-  const res = await fetch(`${API_BASE}/scheduler/tasks/${id}`, { method: "DELETE" });
+  const res = await apiFetch(`${API_BASE}/scheduler/tasks/${id}`, { method: "DELETE" });
   if (!res.ok) throw new Error("Failed to delete task");
 }
 
 export async function runScheduledTask(id: string): Promise<{ id: string; status: string }> {
-  const res = await fetch(`${API_BASE}/scheduler/tasks/${id}/run`, { method: "POST" });
+  const res = await apiFetch(`${API_BASE}/scheduler/tasks/${id}/run`, { method: "POST" });
   if (!res.ok) throw new Error("Failed to trigger task");
   return res.json();
 }
@@ -281,8 +288,7 @@ export interface UploadedFile {
 export async function uploadFile(file: globalThis.File): Promise<UploadedFile> {
   const formData = new FormData();
   formData.append("file", file);
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  const res = await fetch(`${baseUrl}/api/files/upload`, {
+  const res = await apiFetch(`${API_BASE}/files/upload`, {
     method: "POST",
     body: formData,
   });
@@ -293,8 +299,7 @@ export async function uploadFile(file: globalThis.File): Promise<UploadedFile> {
 export async function readImageAsBase64(file: globalThis.File): Promise<{ data_url: string; filename: string }> {
   const formData = new FormData();
   formData.append("file", file);
-  const baseUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-  const res = await fetch(`${baseUrl}/api/files/read-image`, {
+  const res = await apiFetch(`${API_BASE}/files/read-image`, {
     method: "POST",
     body: formData,
   });

@@ -1,6 +1,6 @@
 "use client";
 
-import { Component, type ReactNode } from "react";
+import React, { Component, type ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
@@ -22,6 +22,10 @@ export default class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error("Unhandled render error:", error, info.componentStack);
+  }
+
   render() {
     if (this.state.hasError) {
       if (this.props.fallback) return this.props.fallback;
@@ -30,7 +34,7 @@ export default class ErrorBoundary extends Component<Props, State> {
           padding: 24, textAlign: "center", color: "var(--text-secondary)",
         }}>
           <p style={{ fontSize: 14, marginBottom: 12 }}>
-            Something went wrong: {this.state.error?.message || "Unknown error"}
+            Something went wrong. Please try again.
           </p>
           <button onClick={() => this.setState({ hasError: false, error: null })} style={{
             padding: "8px 16px", fontSize: 13, background: "var(--accent)",

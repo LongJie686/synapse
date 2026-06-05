@@ -2,20 +2,37 @@
 
 from __future__ import annotations
 
-import os
+import re
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 router = APIRouter()
 
 _skill_registry = None
 
+_SKILLS_ROOT = Path(__file__).resolve().parent.parent.parent / "skills"
+
+# Only allow alphanumeric, underscore, hyphen — no slashes or dots
+_SAFE_SKILL_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
+
 
 def configure(skill_registry) -> None:
     global _skill_registry
     _skill_registry = skill_registry
+
+
+def _resolve_skill_path(skill_name: str) -> Path:
+    """Validate skill name and return a path guaranteed within skills directory."""
+    if not _SAFE_SKILL_NAME.match(skill_name):
+        raise HTTPException(status_code=400, detail="Invalid skill name format")
+    resolved = (_SKILLS_ROOT / f"{skill_name}.yaml").resolve()
+    try:
+        resolved.relative_to(_SKILLS_ROOT.resolve())
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid skill path")
+    return resolved
 
 
 class SkillCreateRequest(BaseModel):
@@ -26,6 +43,13 @@ class SkillCreateRequest(BaseModel):
     system_prompt: str = ""
     temperature: float = 0.7
     max_tokens: int = 4096
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        if not _SAFE_SKILL_NAME.match(v):
+            raise ValueError("name must be 1-64 alphanumeric/underscore/hyphen characters")
+        return v
 
 
 @router.get("/skills")
@@ -60,10 +84,8 @@ async def create_skill(req: SkillCreateRequest) -> dict:
         "max_tokens": req.max_tokens,
     }
 
-    project_root = Path(__file__).resolve().parent.parent.parent
-    skills_dir = project_root / "skills"
-    skills_dir.mkdir(exist_ok=True)
-    yaml_path = skills_dir / f"{req.name}.yaml"
+    _SKILLS_ROOT.mkdir(exist_ok=True)
+    yaml_path = _resolve_skill_path(req.name)
 
     if yaml_path.exists():
         raise HTTPException(status_code=409, detail=f"Skill '{req.name}' already exists")
@@ -71,7 +93,6 @@ async def create_skill(req: SkillCreateRequest) -> dict:
     with open(yaml_path, "w", encoding="utf-8") as f:
         yaml.dump(skill_data, f, allow_unicode=True, default_flow_style=False)
 
-    # Reload skills into registry
     if _skill_registry:
         from synapse_core.skills import load_skill_from_yaml
         skill = load_skill_from_yaml(yaml_path)
@@ -84,13 +105,12 @@ async def create_skill(req: SkillCreateRequest) -> dict:
 @router.delete("/skills/{skill_name}")
 async def delete_skill(skill_name: str) -> dict:
     """Delete a skill by removing its YAML file."""
-    project_root = Path(__file__).resolve().parent.parent.parent
-    yaml_path = project_root / "skills" / f"{skill_name}.yaml"
+    yaml_path = _resolve_skill_path(skill_name)
 
     if not yaml_path.exists():
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
-    os.remove(yaml_path)
+    yaml_path.unlink()
 
     if _skill_registry:
         _skill_registry.unregister(skill_name)
@@ -104,7 +124,5 @@ async def reload_skills() -> dict:
     if not _skill_registry:
         raise HTTPException(status_code=500, detail="Skill registry not available")
 
-    project_root = Path(__file__).resolve().parent.parent.parent
-    skills_dir = project_root / "skills"
-    count = _skill_registry.load_from_directory(skills_dir)
+    count = _skill_registry.load_from_directory(_SKILLS_ROOT)
     return {"status": "reloaded", "count": count}
